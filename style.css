@@ -1,21 +1,63 @@
 /* style.css */
-#gameBoard {
-    display: grid;
-    grid-template-columns: repeat(8, 50px);
-    grid-gap: 5px;
-    justify-content: center;
-    margin-top: 20px;
-}
-
-.territory {
-    width: 50px;
-    height: 50px;
+body {
     display: flex;
-    align-items: center;
     justify-content: center;
-    cursor: pointer;
-    border: 1px solid #000;
+    align-items: center;
+    height: 100vh;
+    background-color: #f0f0f0;
 }
 
-.player1 { background-color: lightblue; }
-.player2 { background-color: lightcoral; }
+#gameBoard {
+    display: flex;
+    flex-wrap: wrap;
+    margin: 20px;
+    user-select: none;
+}
+
+.territory.hex {
+    position: relative;
+    width: calc(100px - 2px); /* Adjust based on actual size minus border */
+    height: calc(173.2px - 2px); /* Adjust for a perfect hexagon height minus border, height = sqrt(3)/2 * width */
+    margin-bottom: -26px; /* Adjust to fit hexagons closer together */
+    background-color: #ddd;
+    border: 1px solid #999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+}
+
+/* Offset every other row by half the width of a hex */
+.territory.hex:nth-child(odd) {
+    margin-right: 50px; /* Half of your hex width */
+}
+
+/* Player colors */
+.player1 {
+    background-color: lightblue;
+}
+
+.player2 {
+    background-color: lightcoral;
+}
+
+/* Optional: Add a hover effect for hex tiles */
+.territory.hex:hover {
+    border-color: black;
+}
+
+/* Button styling */
+#endTurn {
+    padding: 10px 20px;
+    margin-top: 20px;
+    border: none;
+    background-color: #007bff;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+#endTurn:hover {
+    background-color: #0056b3;
+}
