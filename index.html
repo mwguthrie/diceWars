@@ -125,8 +125,8 @@
     /**********************************
      * CONFIGURATION
      **********************************/
-    const ROWS = 30;               // Number of grid rows
-    const COLS = 40;               // Number of grid columns
+    const ROWS = 20;               // Reduced from 30 to 20
+    const COLS = 30;               // Reduced from 40 to 30
     let NUM_PLAYERS = 1 + 1;       // Total players = 1 human + selected AI; default 1 AI
     const FULL_PLAYER_COLORS = [
       '#3B83BD', // Player 1 (Human) – blue
@@ -138,7 +138,7 @@
     ];
     let PLAYER_COLORS = FULL_PLAYER_COLORS.slice(0, NUM_PLAYERS);
 
-    const WATER_COLOR = '#ADD8E6'; // lighter blue for water
+    const WATER_COLOR = '#D0EFFF'; // lighter blue for water (easier to distinguish)
 
     const FPS = 30;                // Redraw frames per second
     const ANIM_FRAMES = 15;        // Frames for dice‐roll animation
@@ -173,7 +173,8 @@
     //   framesLeft,
     //   A_dice, D_dice,
     //   finalAttackerRolls: [...],
-    //   finalDefenderRolls: [...]
+    //   finalDefenderRolls: [...],
+    //   finalDisplayed: false
     // };
 
     /**********************************
@@ -390,7 +391,7 @@
       return { totalLandTiles, peninsulaCount, coastLength, regionCount, score };
     }
 
-    // Generate multiple candidate maps, pick the one with highest complexity but regionCount==1
+    // Generate multiple candidate maps, pick the one with highest complexity but regionCount == 1
     function findBestMap(rows, cols, seedCount, growthIterations, trials) {
       let bestGrid = null;
       let bestScore = -Infinity;
@@ -402,7 +403,7 @@
           bestGrid = candidate.map(row => row.slice());
         }
       }
-      // If no single‐region candidate found, fall back to first single‐region by simple looping
+      // If none found, keep generating until a single-region map appears
       if (!bestGrid) {
         while (true) {
           const candidate = generateLandMap(rows, cols, seedCount, growthIterations);
@@ -420,7 +421,7 @@
      * GAME INITIALIZATION
      **********************************/
     function initGame() {
-      // 1) Procedurally generate landGrid
+      // 1) Procedurally generate landGrid (connected)
       landGrid = findBestMap(
         ROWS, COLS,
         SEED_COUNT, GROWTH_ITERATIONS,
@@ -727,7 +728,8 @@
         A_dice,
         D_dice,
         finalAttackerRolls,
-        finalDefenderRolls
+        finalDefenderRolls,
+        finalDisplayed: false
       };
       updateStatus();
     }
@@ -737,7 +739,8 @@
       const {
         attackerIdx, defenderIdx,
         framesLeft, A_dice, D_dice,
-        finalAttackerRolls, finalDefenderRolls
+        finalAttackerRolls, finalDefenderRolls,
+        finalDisplayed
       } = anim;
 
       const attackerPos = hexCenter(
@@ -750,46 +753,73 @@
       );
 
       // Die sizing & spacing
-      const dieSize = Math.min(HEX_RADIUS * 0.8, 30);
-      const spacing = 4;
-      // Attacker dice (above attacker hex)
-      const totalWidthA = A_dice * dieSize + (A_dice - 1) * spacing;
-      const startXA = attackerPos.centerX - totalWidthA / 2;
-      const yA = attackerPos.centerY - HEX_RADIUS - dieSize - 6;
+      // Increase base die size for visibility
+      const baseDieSize = Math.min(HEX_RADIUS * 1.0, 36);
+      const spacing = 6;
 
-      // Defender dice (below defender hex)
-      const totalWidthD = D_dice * dieSize + (D_dice - 1) * spacing;
-      const startXD = defenderPos.centerX - totalWidthD / 2;
-      const yD = defenderPos.centerY + HEX_RADIUS + 6;
+      if (framesLeft > 1) {
+        // Draw random faces
+        const dieSize = baseDieSize;
+        // Attacker dice (above attacker hex)
+        const totalWidthA = A_dice * dieSize + (A_dice - 1) * spacing;
+        const startXA = attackerPos.centerX - totalWidthA / 2;
+        const yA = attackerPos.centerY - HEX_RADIUS - dieSize - 8;
 
-      const isFinalFrame = framesLeft <= 1;
+        for (let i = 0; i < A_dice; i++) {
+          const x = startXA + i * (dieSize + spacing);
+          const face = Math.floor(Math.random() * 6) + 1;
+          drawSingleDie(x, yA, dieSize, face, false);
+        }
 
-      // Draw attacker dice
-      for (let i = 0; i < A_dice; i++) {
-        const x = startXA + i * (dieSize + spacing);
-        const face = isFinalFrame
-          ? finalAttackerRolls[i]
-          : Math.floor(Math.random() * 6) + 1;
-        drawSingleDie(x, yA, dieSize, face, isFinalFrame);
-      }
+        // Defender dice (below defender hex)
+        const totalWidthD = D_dice * dieSize + (D_dice - 1) * spacing;
+        const startXD = defenderPos.centerX - totalWidthD / 2;
+        const yD = defenderPos.centerY + HEX_RADIUS + 8;
 
-      // Draw defender dice
-      for (let i = 0; i < D_dice; i++) {
-        const x = startXD + i * (dieSize + spacing);
-        const face = isFinalFrame
-          ? finalDefenderRolls[i]
-          : Math.floor(Math.random() * 6) + 1;
-        drawSingleDie(x, yD, dieSize, face, isFinalFrame);
-      }
+        for (let i = 0; i < D_dice; i++) {
+          const x = startXD + i * (dieSize + spacing);
+          const face = Math.floor(Math.random() * 6) + 1;
+          drawSingleDie(x, yD, dieSize, face, false);
+        }
 
-      anim.framesLeft--;
-      if (anim.framesLeft <= 0) {
-        resolveAttack(
-          anim.attackerIdx,
-          anim.defenderIdx,
-          finalAttackerRolls.reduce((sum, v) => sum + v, 0),
-          finalDefenderRolls.reduce((sum, v) => sum + v, 0)
-        );
+        anim.framesLeft--;
+      } else {
+        // Final frame: show actual rolls, highlighted, then pause before resolution
+        if (!finalDisplayed) {
+          anim.finalDisplayed = true;
+          const dieSize = baseDieSize * 1.2; // larger for final
+          // Attacker dice (above attacker hex)
+          const totalWidthA = A_dice * dieSize + (A_dice - 1) * spacing;
+          const startXA = attackerPos.centerX - totalWidthA / 2;
+          const yA = attackerPos.centerY - HEX_RADIUS - dieSize - 8;
+
+          for (let i = 0; i < A_dice; i++) {
+            const x = startXA + i * (dieSize + spacing);
+            const face = finalAttackerRolls[i];
+            drawSingleDie(x, yA, dieSize, face, true);
+          }
+
+          // Defender dice (below defender hex)
+          const totalWidthD = D_dice * dieSize + (D_dice - 1) * spacing;
+          const startXD = defenderPos.centerX - totalWidthD / 2;
+          const yD = defenderPos.centerY + HEX_RADIUS + 8;
+
+          for (let i = 0; i < D_dice; i++) {
+            const x = startXD + i * (dieSize + spacing);
+            const face = finalDefenderRolls[i];
+            drawSingleDie(x, yD, dieSize, face, true);
+          }
+
+          // After a brief pause (1 second), resolve the attack
+          setTimeout(() => {
+            resolveAttack(
+              attackerIdx,
+              defenderIdx,
+              finalAttackerRolls.reduce((sum, v) => sum + v, 0),
+              finalDefenderRolls.reduce((sum, v) => sum + v, 0)
+            );
+          }, 1000);
+        }
       }
     }
 
@@ -802,7 +832,7 @@
       // Border: gold if final frame, otherwise black
       if (highlight) {
         ctx.strokeStyle = '#FFD700';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 4;
       } else {
         ctx.strokeStyle = '#000000';
         ctx.lineWidth = 2;
