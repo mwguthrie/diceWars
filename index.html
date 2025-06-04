@@ -15,6 +15,8 @@
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       user-select: none;
       text-align: center;
+      height: 100vh;
+      overflow: hidden;
     }
 
     #controls {
@@ -30,7 +32,8 @@
       color: #333333;
     }
 
-    #controls select, #controls button {
+    #controls select,
+    #controls button {
       padding: 6px 12px;
       font-size: 16px;
       background: #f0f0f0;
@@ -53,6 +56,7 @@
     #gameContainer {
       display: inline-block;
       margin-top: 12px;
+      position: relative;
     }
 
     /* Canvas styled to mimic DiceWarsJS white background */
@@ -95,6 +99,26 @@
       font-size: 16px;
       color: #555555;
     }
+
+    /* Dice result banner at bottom */
+    #diceResult {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      color: #ffffff;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 18px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.5s;
+      z-index: 100;
+    }
+    #diceResult.show {
+      opacity: 1;
+    }
   </style>
 </head>
 <body>
@@ -108,7 +132,7 @@
       <option value="4">4 AI</option>
       <option value="5">5 AI</option>
     </select>
-    <button id="newMapBtn">Generate New Map & Start</button>
+    <button id="newMapBtn">Generate New Map</button>
   </div>
 
   <!-- Game container: canvas + end-turn button -->
@@ -119,6 +143,9 @@
       <span id="statusText">Loading…</span>
     </div>
   </div>
+
+  <!-- Dice result banner -->
+  <div id="diceResult"></div>
 
   <script>
   (function() {
@@ -174,6 +201,7 @@
     //   A_dice, D_dice,
     //   finalAttackerRolls: [...],
     //   finalDefenderRolls: [...],
+    //   attackerSum, defenderSum,
     //   finalDisplayed: false
     // };
 
@@ -203,6 +231,7 @@
     const newMapBtn     = document.getElementById('newMapBtn');
     const endTurnBtn    = document.getElementById('endTurnBtn');
     const statusText    = document.getElementById('statusText');
+    const diceResultDiv = document.getElementById('diceResult');
 
     /**********************************
      * MAP GENERATION FUNCTIONS
@@ -720,6 +749,8 @@
         { length: D_dice },
         () => Math.floor(Math.random() * 6) + 1
       );
+      const attackerSum = finalAttackerRolls.reduce((sum, v) => sum + v, 0);
+      const defenderSum = finalDefenderRolls.reduce((sum, v) => sum + v, 0);
 
       anim = {
         attackerIdx,
@@ -729,6 +760,8 @@
         D_dice,
         finalAttackerRolls,
         finalDefenderRolls,
+        attackerSum,
+        defenderSum,
         finalDisplayed: false
       };
       updateStatus();
@@ -740,6 +773,7 @@
         attackerIdx, defenderIdx,
         framesLeft, A_dice, D_dice,
         finalAttackerRolls, finalDefenderRolls,
+        attackerSum, defenderSum,
         finalDisplayed
       } = anim;
 
@@ -752,10 +786,9 @@
         defenderIdx % COLS
       );
 
-      // Die sizing & spacing
-      // Increase base die size for visibility
-      const baseDieSize = Math.min(HEX_RADIUS * 1.0, 36);
-      const spacing = 6;
+      // Increase die size for more visibility
+      const baseDieSize = Math.min(HEX_RADIUS * 1.4, 50);
+      const spacing = 8;
 
       if (framesLeft > 1) {
         // Draw random faces
@@ -763,7 +796,7 @@
         // Attacker dice (above attacker hex)
         const totalWidthA = A_dice * dieSize + (A_dice - 1) * spacing;
         const startXA = attackerPos.centerX - totalWidthA / 2;
-        const yA = attackerPos.centerY - HEX_RADIUS - dieSize - 8;
+        const yA = attackerPos.centerY - HEX_RADIUS - dieSize - 10;
 
         for (let i = 0; i < A_dice; i++) {
           const x = startXA + i * (dieSize + spacing);
@@ -774,7 +807,7 @@
         // Defender dice (below defender hex)
         const totalWidthD = D_dice * dieSize + (D_dice - 1) * spacing;
         const startXD = defenderPos.centerX - totalWidthD / 2;
-        const yD = defenderPos.centerY + HEX_RADIUS + 8;
+        const yD = defenderPos.centerY + HEX_RADIUS + 10;
 
         for (let i = 0; i < D_dice; i++) {
           const x = startXD + i * (dieSize + spacing);
@@ -784,54 +817,88 @@
 
         anim.framesLeft--;
       } else {
-        // Final frame: show actual rolls, highlighted, then pause before resolution
+        // Final frame: show actual rolls with colored borders indicating winner/loser
         if (!finalDisplayed) {
           anim.finalDisplayed = true;
           const dieSize = baseDieSize * 1.2; // larger for final
           // Attacker dice (above attacker hex)
           const totalWidthA = A_dice * dieSize + (A_dice - 1) * spacing;
           const startXA = attackerPos.centerX - totalWidthA / 2;
-          const yA = attackerPos.centerY - HEX_RADIUS - dieSize - 8;
+          const yA = attackerPos.centerY - HEX_RADIUS - dieSize - 10;
 
+          const attackerWon = attackerSum > defenderSum;
           for (let i = 0; i < A_dice; i++) {
             const x = startXA + i * (dieSize + spacing);
             const face = finalAttackerRolls[i];
-            drawSingleDie(x, yA, dieSize, face, true);
+            drawSingleDie(
+              x, yA, dieSize, face,
+              true,
+              attackerWon ? '#00FF00' : '#FF0000'
+            );
           }
 
           // Defender dice (below defender hex)
           const totalWidthD = D_dice * dieSize + (D_dice - 1) * spacing;
           const startXD = defenderPos.centerX - totalWidthD / 2;
-          const yD = defenderPos.centerY + HEX_RADIUS + 8;
+          const yD = defenderPos.centerY + HEX_RADIUS + 10;
 
           for (let i = 0; i < D_dice; i++) {
             const x = startXD + i * (dieSize + spacing);
             const face = finalDefenderRolls[i];
-            drawSingleDie(x, yD, dieSize, face, true);
+            drawSingleDie(
+              x, yD, dieSize, face,
+              true,
+              attackerWon ? '#FF0000' : '#00FF00'
+            );
           }
+
+          // Show banner at bottom with outcome
+          const humanIsAttacker = (currentPlayer === 0);
+          let message;
+          if (humanIsAttacker) {
+            if (attackerWon) {
+              message = `You win the roll (${attackerSum} vs ${defenderSum})`;
+            } else {
+              message = `You lose the roll (${attackerSum} vs ${defenderSum})`;
+            }
+          } else {
+            // AI attacked human
+            const defenderIsHuman = (territories[defenderIdx].owner === 0);
+            if (defenderIsHuman) {
+              if (attackerWon) {
+                message = `AI Player ${currentPlayer + 1} wins the roll (${attackerSum} vs ${defenderSum})`;
+              } else {
+                message = `You defend successfully (${defenderSum} vs ${attackerSum})`;
+              }
+            } else {
+              // AI vs AI (unlikely to animate), skip banner
+              message = '';
+            }
+          }
+          if (message) showDiceResult(message);
 
           // After a brief pause (1 second), resolve the attack
           setTimeout(() => {
             resolveAttack(
               attackerIdx,
               defenderIdx,
-              finalAttackerRolls.reduce((sum, v) => sum + v, 0),
-              finalDefenderRolls.reduce((sum, v) => sum + v, 0)
+              attackerSum,
+              defenderSum
             );
           }, 1000);
         }
       }
     }
 
-    // Draw one die; highlight=true → thick gold border
-    function drawSingleDie(x, y, size, face, highlight) {
+    // Draw one die; highlight=true → thick colored border (winner=green, loser=red, default=black)
+    function drawSingleDie(x, y, size, face, highlight, borderColor) {
       // White square
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(x, y, size, size);
 
-      // Border: gold if final frame, otherwise black
+      // Border color logic
       if (highlight) {
-        ctx.strokeStyle = '#FFD700';
+        ctx.strokeStyle = borderColor || '#FFD700';
         ctx.lineWidth = 4;
       } else {
         ctx.strokeStyle = '#000000';
@@ -947,11 +1014,10 @@
         for (const j of nbrs) {
           const neighbor = territories[j];
           if (neighbor.owner < 0 || neighbor.owner === aiPlayer) continue;
-          // Skip if defender has strictly more dice
-          if (neighbor.dice > cell.dice) continue;
-          // If equal dice, only attempt ~10% of the time
-          if (neighbor.dice === cell.dice && Math.random() > 0.9) continue;
-          validAttacks.push({ attacker: i, defender: j });
+          // Allow attack if AI dice ≥ neighbor dice
+          if (cell.dice >= neighbor.dice) {
+            validAttacks.push({ attacker: i, defender: j });
+          }
         }
       }
 
@@ -995,6 +1061,18 @@
         sum += Math.floor(Math.random() * 6) + 1;
       }
       return sum;
+    }
+
+    /**********************************
+     * DICE RESULT BANNER
+     **********************************/
+    function showDiceResult(message) {
+      diceResultDiv.textContent = message;
+      diceResultDiv.classList.add('show');
+      // Hide after 2 seconds
+      setTimeout(() => {
+        diceResultDiv.classList.remove('show');
+      }, 2000);
     }
 
     /**********************************
