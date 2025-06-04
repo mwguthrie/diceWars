@@ -1,14 +1,400 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dice Wars</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <title>Dice Wars Clone</title>
+  <style>
+    /* ----------------------------------------------
+       BASIC RESET & LAYOUT
+    ---------------------------------------------- */
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #222;
+      color: #eee;
+      font-family: Arial, sans-serif;
+      user-select: none;
+    }
+
+    #gameContainer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 10px;
+    }
+
+    canvas {
+      background: #333;
+      border: 2px solid #555;
+    }
+
+    #uiBar {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    button {
+      padding: 6px 12px;
+      font-size: 16px;
+      background: #444;
+      border: 1px solid #666;
+      color: #eee;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #statusText {
+      font-size: 16px;
+    }
+
+    /* Highlight for selected territory */
+    .highlight {
+      stroke: #fff;
+      line-width: 3;
+    }
+  </style>
 </head>
 <body>
-    <div id="gameBoard"></div>
-    <button id="endTurn">End Turn</button>
-    <script src="script.js"></script>
+  <div id="gameContainer">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="uiBar">
+      <button id="endTurnBtn">End Turn</button>
+      <span id="statusText">Loading…</span>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    /*** CONFIGURATION ***/
+    const ROWS = 6;
+    const COLS = 8;
+    const CELL_PADDING = 2;            // pixels of padding inside each cell
+    const NUM_PLAYERS = 4;            // Player 1 is human (index 0), players 2–NUM_PLAYERS are AI
+    const PLAYER_COLORS = [
+      '#3B83BD', // Player 1 (Human) – blue
+      '#BD3B3B', // AI 2 – red
+      '#3BBD3B', // AI 3 – green
+      '#BDBD3B', // AI 4 – yellow
+      // You can add more colors if you increase NUM_PLAYERS
+    ];
+    const FPS = 30;                   // draw/update rate
+
+    /*** GAME STATE ***/
+    let territories = [];   // Array of { owner: 0..NUM_PLAYERS-1, dice: int }
+    let currentPlayer = 0;  // 0 = human, 1..NUM_PLAYERS-1 = AI
+    let selectedIndex = null;
+    let gameOver = false;
+
+    /*** CANVAS SETUP ***/
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+    const cellWidth = canvasWidth / COLS;
+    const cellHeight = canvasHeight / ROWS;
+
+    /*** UI ELEMENTS ***/
+    const endTurnBtn = document.getElementById('endTurnBtn');
+    const statusText = document.getElementById('statusText');
+
+    /**********************************
+     * INITIALIZATION
+     **********************************/
+    function initGame() {
+      // Create and randomly assign each territory to a player, 1 die each
+      territories = new Array(ROWS * COLS).fill(null).map(() => {
+        return {
+          owner: Math.floor(Math.random() * NUM_PLAYERS),
+          dice: 1
+        };
+      });
+
+      currentPlayer = 0;
+      selectedIndex = null;
+      gameOver = false;
+      updateStatus();
+      draw();
+    }
+
+    /**********************************
+     * DRAWING
+     **********************************/
+    function draw() {
+      ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const idx = r * COLS + c;
+          const terr = territories[idx];
+          const x = c * cellWidth;
+          const y = r * cellHeight;
+
+          // Draw cell background
+          ctx.fillStyle = PLAYER_COLORS[terr.owner];
+          ctx.fillRect(x + CELL_PADDING, y + CELL_PADDING,
+                       cellWidth - 2 * CELL_PADDING, cellHeight - 2 * CELL_PADDING);
+
+          // If selected, draw highlight
+          if (idx === selectedIndex && currentPlayer === 0 && !gameOver) {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(x + CELL_PADDING, y + CELL_PADDING,
+                           cellWidth - 2 * CELL_PADDING, cellHeight - 2 * CELL_PADDING);
+          }
+
+          // Draw dice count
+          ctx.fillStyle = '#fff';
+          ctx.font = `${Math.floor(cellHeight * 0.4)}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(
+            terr.dice,
+            x + cellWidth / 2,
+            y + cellHeight / 2
+          );
+        }
+      }
+    }
+
+    /**********************************
+     * STATUS & TURN MANAGEMENT
+     **********************************/
+    function updateStatus() {
+      if (gameOver) {
+        statusText.textContent = `Player ${winner + 1} wins!`;
+        endTurnBtn.disabled = true;
+        return;
+      }
+      if (currentPlayer === 0) {
+        statusText.textContent = 'Your turn (Blue). Select a territory to attack or click "End Turn".';
+        endTurnBtn.disabled = false;
+      } else {
+        statusText.textContent = `AI Player ${currentPlayer + 1} is thinking…`;
+        endTurnBtn.disabled = true;
+        // Let AI play after a short delay so user sees status change
+        setTimeout(() => { aiTurn(currentPlayer); }, 500);
+      }
+    }
+
+    function endHumanTurn() {
+      if (gameOver || currentPlayer !== 0) return;
+      selectedIndex = null;
+      reinforce(currentPlayer);
+      advanceToNextPlayer();
+    }
+
+    function advanceToNextPlayer() {
+      // Check for eliminated players and skip them
+      let next = (currentPlayer + 1) % NUM_PLAYERS;
+      let iter = 0;
+      while (!hasTerritories(next) && iter < NUM_PLAYERS) {
+        next = (next + 1) % NUM_PLAYERS;
+        iter++;
+      }
+      currentPlayer = next;
+      checkGameOver();
+      updateStatus();
+      draw();
+    }
+
+    function hasTerritories(player) {
+      return territories.some(t => t.owner === player);
+    }
+
+    /**********************************
+     * GAME OVER CHECK
+     **********************************/
+    let winner = null;
+    function checkGameOver() {
+      // If only one player has territories, game over
+      const owners = new Set(territories.map(t => t.owner));
+      if (owners.size === 1) {
+        gameOver = true;
+        winner = [...owners][0];
+      }
+    }
+
+    /**********************************
+     * REINFORCEMENTS
+     **********************************/
+    function reinforce(player) {
+      // Each territory owned by `player` gets +1 die
+      for (let i = 0; i < territories.length; i++) {
+        if (territories[i].owner === player) {
+          territories[i].dice++;
+        }
+      }
+    }
+
+    /**********************************
+     * HUMAN INTERACTION (CLICK HANDLING)
+     **********************************/
+    canvas.addEventListener('click', (evt) => {
+      if (gameOver || currentPlayer !== 0) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const mx = evt.clientX - rect.left;
+      const my = evt.clientY - rect.top;
+      const c = Math.floor(mx / cellWidth);
+      const r = Math.floor(my / cellHeight);
+      if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return;
+      const idx = r * COLS + c;
+      const terr = territories[idx];
+
+      // If clicked on your own territory with at least 2 dice, select it
+      if (terr.owner === 0 && terr.dice > 1) {
+        selectedIndex = (selectedIndex === idx) ? null : idx;
+        draw();
+        return;
+      }
+
+      // Otherwise, if a territory is already selected, attempt attack
+      if (selectedIndex !== null) {
+        attemptAttack(selectedIndex, idx);
+      }
+    });
+
+    endTurnBtn.addEventListener('click', endHumanTurn);
+
+    /**********************************
+     * ATTACK LOGIC
+     *   attackerIdx: index of territory you control (dice >= 2)
+     *   defenderIdx: adjacent territory (owner != currentPlayer)
+     **********************************/
+    function attemptAttack(attackerIdx, defenderIdx) {
+      if (gameOver) return;
+      const A = territories[attackerIdx];
+      const D = territories[defenderIdx];
+
+      // Must be adjacent
+      if (!isNeighbor(attackerIdx, defenderIdx)) return;
+      // Must belong to different owners
+      if (A.owner !== currentPlayer || D.owner === currentPlayer) return;
+      // Must have at least 2 dice to attack
+      if (A.dice < 2) return;
+
+      // Roll dice: attacker rolls A.dice times, defender rolls D.dice times
+      const attackerSum = rollDiceSum(A.dice);
+      const defenderSum = rollDiceSum(D.dice);
+
+      if (attackerSum > defenderSum) {
+        // Attacker wins: conquer territory
+        const movedDice = A.dice - 1; // move all but one
+        territories[defenderIdx].owner = currentPlayer;
+        territories[defenderIdx].dice = movedDice;
+        A.dice = 1;
+      } else {
+        // Defender holds: attacker loses one die
+        A.dice = Math.max(1, A.dice - 1);
+      }
+
+      // After each attack, check if defender just eliminated a player
+      checkElimination(D.owner);
+      checkGameOver();
+      draw();
+      updateStatus();
+    }
+
+    function rollDiceSum(count) {
+      let sum = 0;
+      for (let i = 0; i < count; i++) {
+        sum += (Math.floor(Math.random() * 6) + 1);
+      }
+      return sum;
+    }
+
+    function isNeighbor(idx1, idx2) {
+      const r1 = Math.floor(idx1 / COLS), c1 = idx1 % COLS;
+      const r2 = Math.floor(idx2 / COLS), c2 = idx2 % COLS;
+      // 4‐directional adjacency
+      return (
+        (r1 === r2 && Math.abs(c1 - c2) === 1) ||
+        (c1 === c2 && Math.abs(r1 - r2) === 1)
+      );
+    }
+
+    function checkElimination(loser) {
+      if (loser < 0 || loser >= NUM_PLAYERS) return;
+      if (!hasTerritories(loser)) {
+        // If loser was next or previous, skip them in turn order
+        // Nothing else to do—advanceToNextPlayer will automatically skip eliminated
+      }
+    }
+
+    /**********************************
+     * SIMPLE AI TURN
+     *   Very naive: as long as there exists
+     *   a valid attack (dice > neighbor dice), do it.
+     **********************************/
+    function aiTurn(aiPlayer) {
+      if (gameOver || aiPlayer === 0) return;
+
+      let madeAttack;
+      do {
+        madeAttack = false;
+        // Gather all of AI's territories in random order
+        const myTerritories = territories
+          .map((t, i) => ({ idx: i, data: t }))
+          .filter(obj => obj.data.owner === aiPlayer)
+          .sort(() => Math.random() - 0.5);
+
+        for (const { idx, data } of myTerritories) {
+          if (data.dice < 2) continue;
+          // Check neighbors
+          const neighbors = getNeighbors(idx);
+          for (const nIdx of neighbors) {
+            const neigh = territories[nIdx];
+            if (neigh.owner !== aiPlayer && data.dice > neigh.dice) {
+              // Attempt attack
+              const attackerSum = rollDiceSum(data.dice);
+              const defenderSum = rollDiceSum(neigh.dice);
+              if (attackerSum > defenderSum) {
+                const movedDice = data.dice - 1;
+                territories[nIdx].owner = aiPlayer;
+                territories[nIdx].dice = movedDice;
+                data.dice = 1;
+              } else {
+                data.dice = Math.max(1, data.dice - 1);
+              }
+              madeAttack = true;
+              break; // break neighbors loop
+            }
+          }
+          if (madeAttack) break; // break myTerritories loop to re‐scan
+        }
+        // Repeat until no favorable attack remains
+      } while (madeAttack && !gameOver);
+
+      // AI reinforcement
+      reinforce(aiPlayer);
+      checkElimination(aiPlayer);
+      checkGameOver();
+      draw();
+      advanceToNextPlayer();
+    }
+
+    function getNeighbors(idx) {
+      const r = Math.floor(idx / COLS), c = idx % COLS;
+      const neighbors = [];
+      if (r > 0) neighbors.push((r - 1) * COLS + c);
+      if (r < ROWS - 1) neighbors.push((r + 1) * COLS + c);
+      if (c > 0) neighbors.push(r * COLS + (c - 1));
+      if (c < COLS - 1) neighbors.push(r * COLS + (c + 1));
+      return neighbors;
+    }
+
+    /**********************************
+     * START THE GAME
+     **********************************/
+    initGame();
+    setInterval(draw, 1000 / FPS);
+  })();
+  </script>
 </body>
 </html>
