@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Hex Dice Wars with Fixed Procedural Map</title>
+  <title>Hex Dice Wars with Connected Map & AI Count</title>
   <style>
     /* ----------------------------------------------
        BASIC RESET & LAYOUT (styled similarly to DiceWarsJS)
@@ -17,9 +17,42 @@
       text-align: center;
     }
 
+    #controls {
+      margin-top: 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #controls label {
+      font-size: 16px;
+      color: #333333;
+    }
+
+    #controls select, #controls button {
+      padding: 6px 12px;
+      font-size: 16px;
+      background: #f0f0f0;
+      border: 2px solid #aaaaaa;
+      color: #333333;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    #controls select:hover:not(:disabled),
+    #controls button:hover:not(:disabled) {
+      background: #e0e0e0;
+      border-color: #888888;
+    }
+    #controls button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     #gameContainer {
       display: inline-block;
-      margin-top: 20px;
+      margin-top: 12px;
     }
 
     /* Canvas styled to mimic DiceWarsJS white background */
@@ -39,7 +72,7 @@
       gap: 16px;
     }
 
-    button {
+    #uiBar button {
       padding: 8px 16px;
       font-size: 16px;
       background: #f0f0f0;
@@ -49,11 +82,11 @@
       border-radius: 4px;
       transition: background 0.2s, border-color 0.2s;
     }
-    button:hover:not(:disabled) {
+    #uiBar button:hover:not(:disabled) {
       background: #e0e0e0;
       border-color: #888888;
     }
-    button:disabled {
+    #uiBar button:disabled {
       opacity: 0.6;
       cursor: not-allowed;
     }
@@ -65,6 +98,20 @@
   </style>
 </head>
 <body>
+  <!-- Controls: select number of AI, regenerate map -->
+  <div id="controls">
+    <label for="aiCountSelect">Number of AI Players:</label>
+    <select id="aiCountSelect">
+      <option value="1">1 AI</option>
+      <option value="2">2 AI</option>
+      <option value="3">3 AI</option>
+      <option value="4">4 AI</option>
+      <option value="5">5 AI</option>
+    </select>
+    <button id="newMapBtn">Generate New Map & Start</button>
+  </div>
+
+  <!-- Game container: canvas + end-turn button -->
   <div id="gameContainer">
     <canvas id="gameCanvas" width="800" height="600"></canvas>
     <div id="uiBar">
@@ -80,18 +127,24 @@
      **********************************/
     const ROWS = 30;               // Number of grid rows
     const COLS = 40;               // Number of grid columns
-    const NUM_PLAYERS = 4;         // Player 1 is human; 2–4 are AI
-    const PLAYER_COLORS = [
-      '#3B83BD', // Player 1 (Human) – blue
-      '#BD3B3B', // AI 2 – red
-      '#3BBD3B', // AI 3 – green
-      '#BDBD3B'  // AI 4 – yellow
+    let NUM_PLAYERS = 1 + 1;       // Total players = 1 human + selected AI; default 1 AI
+    const FULL_PLAYER_COLORS = [
+      '#3B83BD', // Player 1 (Human) – blue
+      '#BD3B3B', // AI 2 – red
+      '#3BBD3B', // AI 3 – green
+      '#BDBD3B', // AI 4 – yellow
+      '#8A2BE2', // AI 5 – blue-violet
+      '#FFA500'  // AI 6 – orange
     ];
+    let PLAYER_COLORS = FULL_PLAYER_COLORS.slice(0, NUM_PLAYERS);
+
+    const WATER_COLOR = '#ADD8E6'; // lighter blue for water
+
     const FPS = 30;                // Redraw frames per second
     const ANIM_FRAMES = 15;        // Frames for dice‐roll animation
 
     // Map generation parameters
-    const SEED_COUNT = Math.max(1, Math.floor((ROWS * COLS) * 0.04)); // ~4% as initial seeds
+    const SEED_COUNT = Math.max(1, Math.floor((ROWS * COLS) * 0.04)); // ~4% seeds
     const GROWTH_ITERATIONS = 6;    // Number of growth passes
     const MAP_TRIALS = 30;          // How many candidate maps to evaluate
 
@@ -145,8 +198,10 @@
     /**********************************
      * UI ELEMENTS
      **********************************/
-    const endTurnBtn = document.getElementById('endTurnBtn');
-    const statusText = document.getElementById('statusText');
+    const aiCountSelect = document.getElementById('aiCountSelect');
+    const newMapBtn     = document.getElementById('newMapBtn');
+    const endTurnBtn    = document.getElementById('endTurnBtn');
+    const statusText    = document.getElementById('statusText');
 
     /**********************************
      * MAP GENERATION FUNCTIONS
@@ -221,8 +276,7 @@
             }
             if (neighbors === 0) continue; // stay water
 
-            // Probability of flipping grows with # neighbors
-            // (e.g. p = 1 - 0.6^neighbors yields ~0.4 for 1, ~0.64 for 2, ~0.78 for 3, etc.)
+            // Probability p = 1 – 0.6^neighbors
             const p = 1 - Math.pow(0.6, neighbors);
             if (Math.random() < p) {
               newLand[r][c] = true;
@@ -317,7 +371,6 @@
       }
 
       // (C) Combine into a single “complexity score”
-      // Weights can be tuned to taste
       const W_COAST     = 0.6;
       const W_REGIONS   = -0.8;
       const W_PENINSULA = 0.4;
@@ -337,16 +390,27 @@
       return { totalLandTiles, peninsulaCount, coastLength, regionCount, score };
     }
 
-    // Generate multiple candidate maps, pick the one with highest complexity score
+    // Generate multiple candidate maps, pick the one with highest complexity but regionCount==1
     function findBestMap(rows, cols, seedCount, growthIterations, trials) {
       let bestGrid = null;
       let bestScore = -Infinity;
       for (let t = 0; t < trials; t++) {
         const candidate = generateLandMap(rows, cols, seedCount, growthIterations);
         const metrics = computeMapComplexity(candidate);
-        if (metrics.score > bestScore) {
+        if (metrics.regionCount === 1 && metrics.score > bestScore) {
           bestScore = metrics.score;
           bestGrid = candidate.map(row => row.slice());
+        }
+      }
+      // If no single‐region candidate found, fall back to first single‐region by simple looping
+      if (!bestGrid) {
+        while (true) {
+          const candidate = generateLandMap(rows, cols, seedCount, growthIterations);
+          const metrics = computeMapComplexity(candidate);
+          if (metrics.regionCount === 1) {
+            bestGrid = candidate;
+            break;
+          }
         }
       }
       return bestGrid;
@@ -382,6 +446,7 @@
       gameOver = false;
       winner = null;
       anim = null;
+      PLAYER_COLORS = FULL_PLAYER_COLORS.slice(0, NUM_PLAYERS);
       updateStatus();
       draw();
     }
@@ -400,8 +465,8 @@
           const { centerX, centerY } = hexCenter(r, c);
 
           if (cell.owner === -1) {
-            // Water: solid blue hex
-            drawHexagon(centerX, centerY, HEX_RADIUS, '#1E90FF');
+            // Water: lighter blue hex
+            drawHexagon(centerX, centerY, HEX_RADIUS, WATER_COLOR);
           } else {
             // Land: player color
             drawHexagon(centerX, centerY, HEX_RADIUS, PLAYER_COLORS[cell.owner]);
@@ -778,7 +843,7 @@
     function checkElimination(loser) {
       if (loser < 0 || loser >= NUM_PLAYERS) return;
       if (!hasTerritories(loser)) {
-        // No extra handling needed; skip them on next turn rotation
+        // No extra handling needed; skip them in advanceToNextPlayer
       }
     }
 
@@ -907,6 +972,15 @@
      **********************************/
     initGame();
     setInterval(draw, 1000 / FPS);
+
+    /**********************************
+     * EVENT HANDLERS FOR CONTROLS
+     **********************************/
+    newMapBtn.addEventListener('click', () => {
+      const aiCount = parseInt(aiCountSelect.value, 10);
+      NUM_PLAYERS = 1 + aiCount;
+      initGame();
+    });
 
   })();
   </script>
