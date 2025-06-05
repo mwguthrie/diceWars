@@ -250,7 +250,7 @@
       return grid;
     }
 
-    // Remove isolated land tiles (no adjacent land) to avoid one-cell islands
+    // Remove isolated land tiles (no adjacent land) to avoid one‐cell islands
     function removeIsolatedLand(grid) {
       const rows = grid.length, cols = grid[0].length;
       const toRemove = [];
@@ -446,28 +446,33 @@
       );
 
       // 2) Initialize territories[]
-      territories = new Array(ROWS * COLS).fill(null).map((_, idx) => {
-        const r = Math.floor(idx / COLS), c = idx % COLS;
-        if (!landGrid[r][c]) {
-          return { owner: -1, dice: 0 }; // water
-        }
-        // Assign to random player with 1 die
-        return {
-          owner: Math.floor(Math.random() * NUM_PLAYERS),
-          dice: 1
-        };
-      });
+      territories = new Array(ROWS * COLS).fill(null).map(() => ({ owner: -1, dice: 0 }));
 
-      // 3) Place neutral ruins on some random land tiles
-      const landIndices = territories
-        .map((t, idx) => t.owner >= 0 ? idx : null)
-        .filter(idx => idx !== null);
-      const ruinCount = Math.max(1, Math.floor(landIndices.length * 0.02)); // ~2%
+      // First collect all land‐eligible indices
+      const landIndices = [];
+      for (let idx = 0; idx < ROWS * COLS; idx++) {
+        const r = Math.floor(idx / COLS), c = idx % COLS;
+        if (landGrid[r][c]) {
+          landIndices.push(idx);
+        }
+      }
+
+      // Shuffle land indices, then deal in round‐robin to players
       shuffleArray(landIndices);
+      let pi = 0; // player index to assign
+      for (const idx of landIndices) {
+        territories[idx].owner = pi;
+        // Assign initial dice randomly between 1 and 8
+        territories[idx].dice = Math.floor(Math.random() * 8) + 1;
+        pi = (pi + 1) % NUM_PLAYERS;
+      }
+
+      // 3) Place neutral ruins on ~2% of the land tiles
+      const ruinCount = Math.max(1, Math.floor(landIndices.length * 0.02));
       for (let i = 0; i < ruinCount; i++) {
-        const idx = landIndices[i];
-        territories[idx].owner = -2; // ruin
-        territories[idx].dice = 0;
+        const ruinIdx = landIndices[i];
+        territories[ruinIdx].owner = -2;
+        territories[ruinIdx].dice = 0;
       }
 
       // 4) Assign AI personalities
@@ -486,7 +491,7 @@
       draw();
     }
 
-    // Utility: shuffle array in-place
+    // Utility: shuffle array in‐place
     function shuffleArray(arr) {
       for (let i = arr.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -1075,12 +1080,15 @@
         const nbrs = getNeighborsHex(i);
         for (const j of nbrs) {
           const neighbor = territories[j];
-          if (
-            neighbor.owner >= 0 && neighbor.owner !== player &&
-            cell.dice >= neighbor.dice
-          ) {
+          // If neighbor is human (0), attack whenever cell.dice > 1
+          if (neighbor.owner === 0 && cell.dice > 1) {
             attacks.push({ attacker: i, defender: j });
           }
+          // Otherwise, existing condition
+          else if (neighbor.owner >= 1 && neighbor.owner !== player && cell.dice >= neighbor.dice) {
+            attacks.push({ attacker: i, defender: j });
+          }
+          // Ruin capture
           if (neighbor.owner === -2 && cell.dice >= 2) {
             attacks.push({ attacker: i, defender: j });
           }
@@ -1097,12 +1105,14 @@
         const nbrs = getNeighborsHex(i);
         for (const j of nbrs) {
           const neighbor = territories[j];
-          if (
-            neighbor.owner >= 0 && neighbor.owner !== player &&
-            cell.dice >= neighbor.dice + 2
-          ) {
+          // If neighbor is human, require only cell.dice > competitor.dice - 1 (i.e., one-die advantage)
+          if (neighbor.owner === 0 && cell.dice >= neighbor.dice + 1) {
             attacks.push({ attacker: i, defender: j });
           }
+          else if (neighbor.owner >= 1 && neighbor.owner !== player && cell.dice >= neighbor.dice + 2) {
+            attacks.push({ attacker: i, defender: j });
+          }
+          // Ruin capture
           if (neighbor.owner === -2 && cell.dice >= 3) {
             attacks.push({ attacker: i, defender: j });
           }
