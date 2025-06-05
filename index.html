@@ -190,17 +190,20 @@
      * GAME STATE
      **********************************/
     let landGrid = null;    // 2D boolean: true=land, false=water
-    let territories = [];   // length = ROWS*COLS, { owner: -2| -1 | 0..NUM_PLAYERS-1, dice: int }
-                           // owner = -2 → neutral ruin, -1 → water, ≥0 → player index
+    let territories = [];   // length = ROWS*COLS, { owner, dice, region }
+    let regionCount = 0;    // total number of regions on land
+    let regionOwner = [];   // [regionID] → owner player index (≥0), −2=ruin, −1=water
+    let regionDice = [];    // [regionID] → dice count
+
     let currentPlayer = 0;  // 0=human, 1..NUM_PLAYERS-1=AI
-    let selectedIndex = null;
+    let selectedRegion = null;
     let gameOver = false;
     let winner = null;
 
     // Animation state for attack (null if idle)
     let anim = null;
     // anim = {
-    //   attackerIdx, defenderIdx,
+    //   attackerRID, defenderRID,
     //   framesLeft,
     //   A_dice, D_dice,
     //   finalAttackerRolls, finalDefenderRolls,
@@ -435,6 +438,75 @@
     }
 
     /**********************************
+     * REGION PARTITIONING
+     **********************************/
+    function partitionIntoRegions() {
+      const totalCells = ROWS * COLS;
+      const regionIDGrid = new Array(ROWS * COLS).fill(-1);
+      const landCells = [];
+      for (let i = 0; i < totalCells; i++) {
+        const r = Math.floor(i / COLS), c = i % COLS;
+        if (landGrid[r][c]) landCells.push(i);
+      }
+      // Decide approximate region size (e.g., avg ~5 cells)
+      const avgSize = 5;
+      regionCount = Math.max(1, Math.floor(landCells.length / avgSize));
+      // Pick random seeds
+      shuffleArray(landCells);
+      const seeds = landCells.slice(0, regionCount);
+      const queue = [];
+      for (let rid = 0; rid < regionCount; rid++) {
+        const idx = seeds[rid];
+        regionIDGrid[idx] = rid;
+        queue.push(idx);
+      }
+      // Multi-source BFS
+      while (queue.length) {
+        const idx = queue.shift();
+        const rid = regionIDGrid[idx];
+        const neighbors = getNeighborsHex(idx);
+        for (const n of neighbors) {
+          if (
+            regionIDGrid[n] === -1 &&
+            landGrid[Math.floor(n / COLS)][n % COLS]
+          ) {
+            regionIDGrid[n] = rid;
+            queue.push(n);
+          }
+        }
+      }
+      // Some land cells might remain unassigned; assign them to nearest assigned neighbor
+      for (const idx of landCells) {
+        if (regionIDGrid[idx] === -1) {
+          const nbrs = getNeighborsHex(idx);
+          for (const n of nbrs) {
+            if (regionIDGrid[n] !== -1) {
+              regionIDGrid[idx] = regionIDGrid[n];
+              break;
+            }
+          }
+        }
+      }
+      return regionIDGrid;
+    }
+
+    /**********************************
+     * UTILITY: Get neighbor regions of a given region ID
+     **********************************/
+    function getNeighborRegions(rid) {
+      const neighbors = new Set();
+      for (let idx = 0; idx < ROWS * COLS; idx++) {
+        if (territories[idx].region !== rid) continue;
+        const nbrs = getNeighborsHex(idx);
+        for (const n of nbrs) {
+          const nrid = territories[n].region;
+          if (nrid !== rid && nrid !== -1) neighbors.add(nrid);
+        }
+      }
+      return Array.from(neighbors);
+    }
+
+    /**********************************
      * GAME INITIALIZATION
      **********************************/
     function initGame() {
@@ -445,44 +517,63 @@
         MAP_TRIALS
       );
 
-      // 2) Initialize territories[]
-      territories = new Array(ROWS * COLS).fill(null).map(() => ({ owner: -1, dice: 0 }));
-
-      // First collect all land‐eligible indices
-      const landIndices = [];
-      for (let idx = 0; idx < ROWS * COLS; idx++) {
+      // Prepare territories array: mark water vs land
+      territories = new Array(ROWS * COLS).fill(null).map((_, idx) => {
         const r = Math.floor(idx / COLS), c = idx % COLS;
-        if (landGrid[r][c]) {
-          landIndices.push(idx);
+        if (!landGrid[r][c]) {
+          return { owner: -1, dice: 0, region: -1 }; // water
+        }
+        return { owner: null, dice: 0, region: -1 };
+      });
+
+      // 2) Partition land cells into regionCount contiguous regions
+      const regionIDGrid = partitionIntoRegions();
+
+      // 3) Initialize regionOwner & regionDice
+      regionOwner = new Array(regionCount).fill(0);
+      regionDice  = new Array(regionCount).fill(0);
+      for (let rid = 0; rid < regionCount; rid++) {
+        // Round-robin owner assignment
+        regionOwner[rid] = rid % NUM_PLAYERS;
+        // Random dice 1..8
+        regionDice[rid] = Math.floor(Math.random() * 8) + 1;
+      }
+
+      // 4) Assign per-cell owner/dice based on region
+      for (let idx = 0; idx < ROWS * COLS; idx++) {
+        if (territories[idx].owner === -1) continue; // water
+        const rid = regionIDGrid[idx];
+        territories[idx].region = rid;
+        territories[idx].owner  = regionOwner[rid];
+        territories[idx].dice   = regionDice[rid];
+      }
+
+      // 5) Place ~2% of regions as neutral ruins (owner = -2, dice = 0)
+      const uniqueRegions = [...new Set(regionIDGrid.filter(r => r !== -1))];
+      shuffleArray(uniqueRegions);
+      const ruinCount = Math.max(1, Math.floor(uniqueRegions.length * 0.02));
+      for (let i = 0; i < ruinCount; i++) {
+        const rid = uniqueRegions[i];
+        regionOwner[rid] = -2;
+        regionDice[rid]  = 0;
+      }
+      // Update per-cell
+      for (let idx = 0; idx < ROWS * COLS; idx++) {
+        const rid = territories[idx].region;
+        if (rid >= 0 && regionOwner[rid] === -2) {
+          territories[idx].owner = -2;
+          territories[idx].dice  = 0;
         }
       }
 
-      // Shuffle land indices, then deal in round‐robin to players
-      shuffleArray(landIndices);
-      let pi = 0; // player index to assign
-      for (const idx of landIndices) {
-        territories[idx].owner = pi;
-        // Assign initial dice randomly between 1 and 8
-        territories[idx].dice = Math.floor(Math.random() * 8) + 1;
-        pi = (pi + 1) % NUM_PLAYERS;
-      }
-
-      // 3) Place neutral ruins on ~2% of the land tiles
-      const ruinCount = Math.max(1, Math.floor(landIndices.length * 0.02));
-      for (let i = 0; i < ruinCount; i++) {
-        const ruinIdx = landIndices[i];
-        territories[ruinIdx].owner = -2;
-        territories[ruinIdx].dice = 0;
-      }
-
-      // 4) Assign AI personalities
+      // 6) Assign AI personalities
       AI_PERSONALITIES = new Array(NUM_PLAYERS).fill('Human');
       for (let i = 1; i < NUM_PLAYERS; i++) {
         AI_PERSONALITIES[i] = PERSONALITIES[(i - 1) % PERSONALITIES.length];
       }
 
       currentPlayer = 0;
-      selectedIndex = null;
+      selectedRegion = null;
       gameOver = false;
       winner = null;
       anim = null;
@@ -491,7 +582,7 @@
       draw();
     }
 
-    // Utility: shuffle array in‐place
+    // Utility: shuffle array in-place
     function shuffleArray(arr) {
       for (let i = arr.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -523,16 +614,19 @@
             ctx.textBaseline = 'middle';
             ctx.fillText('★', centerX, centerY);
           } else {
-            // Player land
+            // Territory cell
             drawHexagon(centerX, centerY, HEX_RADIUS, PLAYER_COLORS[cell.owner]);
+            // If territory is selected, outline entire region
             if (
-              idx === selectedIndex &&
+              selectedRegion !== null &&
+              cell.region === selectedRegion &&
               currentPlayer === 0 &&
               !gameOver &&
               !anim
             ) {
               drawHexagonOutline(centerX, centerY, HEX_RADIUS, '#FFFFFF', 3);
             }
+            // Draw dice number (same for all cells in region)
             ctx.fillStyle = '#000000';
             ctx.font = `${Math.floor(HEX_RADIUS * 0.9)}px sans-serif`;
             ctx.textAlign = 'center';
@@ -596,19 +690,22 @@
       }
       if (currentPlayer === 0) {
         statusText.textContent =
-          'Your turn (Blue). Select a land hex with ≥2 dice to attack or click "End Turn".';
+          'Your turn (Blue). Select a region with ≥2 dice to attack or click "End Turn".';
         endTurnBtn.disabled = !!anim;
       } else {
         const personality = AI_PERSONALITIES[currentPlayer];
         statusText.textContent = `AI Player ${currentPlayer + 1} (${personality}) is thinking…`;
         endTurnBtn.disabled = true;
-        setTimeout(() => { aiTurn(currentPlayer); }, 500);
+        // Schedule AI move only if no animation is in progress
+        if (!anim) {
+          setTimeout(() => { aiTurn(currentPlayer); }, 500);
+        }
       }
     }
 
     function endHumanTurn() {
       if (gameOver || currentPlayer !== 0 || anim) return;
-      selectedIndex = null;
+      selectedRegion = null;
       reinforce(currentPlayer);
       advanceToNextPlayer();
     }
@@ -627,7 +724,7 @@
     }
 
     function hasTerritories(player) {
-      return territories.some(t => t.owner === player);
+      return regionOwner.some(o => o === player);
     }
 
     /**********************************
@@ -635,9 +732,8 @@
      **********************************/
     function checkGameOver() {
       const owners = new Set(
-        territories
-          .filter(t => t.owner >= 0) // ignore water/ruins
-          .map(t => t.owner)
+        regionOwner
+          .filter(o => o >= 0) // ignore water/ruins
       );
       if (owners.size === 1) {
         gameOver = true;
@@ -649,9 +745,16 @@
      * REINFORCEMENTS
      **********************************/
     function reinforce(player) {
-      for (let i = 0; i < territories.length; i++) {
-        if (territories[i].owner === player) {
-          territories[i].dice++;
+      for (let rid = 0; rid < regionCount; rid++) {
+        if (regionOwner[rid] === player) {
+          regionDice[rid]++;
+        }
+      }
+      // Update per-cell
+      for (let idx = 0; idx < ROWS * COLS; idx++) {
+        const rid = territories[idx].region;
+        if (rid >= 0 && regionOwner[rid] >= 0) {
+          territories[idx].dice = regionDice[rid];
         }
       }
     }
@@ -672,27 +775,22 @@
       if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return;
       const idx = r * COLS + c;
       const cell = territories[idx];
+      const rid  = cell.region;
+      if (rid < 0) return;
 
-      // Select/deselect your own land with ≥2 dice
-      if (cell.owner === 0 && cell.dice > 1) {
-        selectedIndex = (selectedIndex === idx) ? null : idx;
+      // Select/deselect your own region with ≥2 dice
+      if (regionOwner[rid] === 0 && regionDice[rid] > 1) {
+        selectedRegion = (selectedRegion === rid) ? null : rid;
         draw();
         return;
       }
 
-      // If a hex is selected, attempt to attack neighbor (enemy or ruin)
-      if (selectedIndex !== null) {
-        const fromIdx = selectedIndex;
-        const toIdx = idx;
-        const fromCell = territories[fromIdx];
-        const toCell = territories[toIdx];
-        if (
-          fromCell.owner === 0 &&
-          toCell.owner !== 0 &&       // not your own
-          toCell.owner !== -1 &&      // not water
-          isNeighborHex(fromIdx, toIdx)
-        ) {
-          startAttackAnimation(fromIdx, toIdx);
+      // If a region is selected, attempt to attack any adjacent region
+      if (selectedRegion !== null) {
+        const fromRID = selectedRegion;
+        const toRID   = cell.region;
+        if (toRID >= 0 && toRID !== fromRID && isNeighborRegions(fromRID, toRID)) {
+          startAttackAnimation(fromRID, toRID);
         }
       }
     });
@@ -751,11 +849,54 @@
     }
 
     /**********************************
+     * REGION NEIGHBOR LOGIC
+     **********************************/
+    function isNeighborRegions(rid1, rid2) {
+      for (let idx = 0; idx < ROWS * COLS; idx++) {
+        if (territories[idx].region !== rid1) continue;
+        const nbrs = getNeighborsHex(idx);
+        for (const n of nbrs) {
+          if (territories[n].region === rid2) return true;
+          if (rid2 >= 0 && regionOwner[rid2] === -2 && territories[n].region === rid2) return true;
+        }
+      }
+      return false;
+    }
+
+    function getNeighborsHex(idx) {
+      const r = Math.floor(idx / COLS), c = idx % COLS;
+      const results = [];
+      if (c + 1 < COLS) results.push(r * COLS + (c + 1));
+      if (c - 1 >= 0)  results.push(r * COLS + (c - 1));
+
+      if (r % 2 === 0) {
+        if (r - 1 >= 0) {
+          if (c < COLS)   results.push((r - 1) * COLS + c);
+          if (c - 1 >= 0) results.push((r - 1) * COLS + (c - 1));
+        }
+        if (r + 1 < ROWS) {
+          if (c < COLS)   results.push((r + 1) * COLS + c);
+          if (c - 1 >= 0) results.push((r + 1) * COLS + (c - 1));
+        }
+      } else {
+        if (r - 1 >= 0) {
+          if (c + 1 < COLS) results.push((r - 1) * COLS + (c + 1));
+          results.push((r - 1) * COLS + c);
+        }
+        if (r + 1 < ROWS) {
+          if (c + 1 < COLS) results.push((r + 1) * COLS + (c + 1));
+          results.push((r + 1) * COLS + c);
+        }
+      }
+      return results;
+    }
+
+    /**********************************
      * ATTACK ANIMATION & RESOLUTION
      **********************************/
-    function startAttackAnimation(attackerIdx, defenderIdx) {
-      const A_dice = territories[attackerIdx].dice;
-      const D_dice = territories[defenderIdx].dice;
+    function startAttackAnimation(attackerRID, defenderRID) {
+      const A_dice = regionDice[attackerRID];
+      const D_dice = regionDice[defenderRID] || 1; // treat ruin (0 dice) as 1 die for rolling
       const finalAttackerRolls = Array.from(
         { length: A_dice },
         () => Math.floor(Math.random() * 6) + 1
@@ -768,8 +909,8 @@
       const defenderSum = finalDefenderRolls.reduce((s, v) => s + v, 0);
 
       anim = {
-        attackerIdx,
-        defenderIdx,
+        attackerRID,
+        defenderRID,
         framesLeft: ANIM_FRAMES,
         A_dice,
         D_dice,
@@ -785,13 +926,16 @@
     function drawDiceAnimation() {
       if (!anim) return;
       const {
-        attackerIdx, defenderIdx,
+        attackerRID, defenderRID,
         framesLeft, A_dice, D_dice,
         finalAttackerRolls, finalDefenderRolls,
         attackerSum, defenderSum,
         finalDisplayed
       } = anim;
 
+      // Pick representative cells for animation placement
+      const attackerIdx = territories.findIndex(t => t.region === attackerRID);
+      const defenderIdx = territories.findIndex(t => t.region === defenderRID);
       const attackerPos = hexCenter(
         Math.floor(attackerIdx / COLS),
         attackerIdx % COLS
@@ -826,7 +970,7 @@
         }
         anim.framesLeft--;
       } else {
-        // Final frame: show actual with colored borders
+        // Final frame: show actual rolls with colored borders
         if (!finalDisplayed) {
           anim.finalDisplayed = true;
           const dieSize = baseDieSize * 1.2;
@@ -869,7 +1013,7 @@
             }
           } else {
             // AI attacking
-            const defenderOwner = territories[defenderIdx].owner;
+            const defenderOwner = regionOwner[defenderRID];
             const defenderIsHuman = (defenderOwner === 0);
             if (defenderIsHuman) {
               if (attackerWon) {
@@ -879,7 +1023,7 @@
               }
             } else {
               // AI vs AI or AI capturing ruin
-              if (territories[defenderIdx].owner === -2) {
+              if (regionOwner[defenderRID] === -2) {
                 if (attackerWon) {
                   message = `AI Player ${currentPlayer + 1} captured a ruin! (${attackerSum} vs ${defenderSum})`;
                 } else {
@@ -899,7 +1043,7 @@
 
           // After 1 second, resolve
           setTimeout(() => {
-            resolveAttack(attackerIdx, defenderIdx, attackerSum, defenderSum);
+            resolveAttack(attackerRID, defenderRID, attackerSum, defenderSum);
           }, 1000);
         }
       }
@@ -925,208 +1069,246 @@
       ctx.fillText(face, x + size / 2, y + size / 2 + 1);
     }
 
-    function resolveAttack(attackerIdx, defenderIdx, attackerSum, defenderSum) {
-      const A = territories[attackerIdx];
-      const D = territories[defenderIdx];
-
+    function resolveAttack(attackerRID, defenderRID, attackerSum, defenderSum) {
       if (attackerSum > defenderSum) {
-        // Conquer
-        const movedDice = A.dice - 1;
-        const oldOwner = D.owner;
-        territories[defenderIdx].owner = currentPlayer;
-        territories[defenderIdx].dice = movedDice > 0 ? movedDice : 1;
-        A.dice = 1;
-        if (oldOwner >= 0) checkElimination(oldOwner);
+        // Conquer: defender region inherits attacker’s owner
+        const victor = regionOwner[attackerRID];
+        const movedDice = Math.max(1, regionDice[attackerRID] - 1);
+        regionOwner[defenderRID] = victor;
+        regionDice[defenderRID]  = movedDice;
+        regionDice[attackerRID]  = 1;
       } else {
         // Penalty: lose all but one die
-        A.dice = 1;
+        regionDice[attackerRID] = 1;
+      }
+      // Update per-cell data
+      for (let idx = 0; idx < ROWS * COLS; idx++) {
+        const rid = territories[idx].region;
+        if (rid >= 0) {
+          territories[idx].owner = regionOwner[rid];
+          territories[idx].dice  = regionDice[rid];
+        }
       }
 
       anim = null;
       checkGameOver();
       draw();
-      updateStatus();
-    }
-
-    function checkElimination(loser) {
-      if (loser < 0 || loser >= NUM_PLAYERS) return;
-      if (!hasTerritories(loser)) {
-        // Eliminated
-      }
+      updateStatus(); 
+      // Because currentPlayer is still the AI (pn), updateStatus() 
+      // will schedule another aiTurn(...) if any more moves remain.
     }
 
     /**********************************
-     * HEX NEIGHBOR LOGIC
+     * AI UTILITY FUNCTIONS
      **********************************/
-    function isNeighborHex(idx1, idx2) {
-      const r1 = Math.floor(idx1 / COLS), c1 = idx1 % COLS;
-      const r2 = Math.floor(idx2 / COLS), c2 = idx2 % COLS;
-      const dr = r2 - r1, dc = c2 - c1;
-
-      if (dr === 0 && Math.abs(dc) === 1) return true;
-      if (r1 % 2 === 0) {
-        if (dr === -1 && (dc === 0 || dc === -1)) return true;
-        if (dr ===  1 && (dc === 0 || dc === -1)) return true;
-      } else {
-        if (dr === -1 && (dc === 1 || dc === 0)) return true;
-        if (dr ===  1 && (dc === 1 || dc === 0)) return true;
+    // Gathers per-player total dice and area counts
+    function computePlayerStats() {
+      const stats = Array.from({ length: NUM_PLAYERS }, () => ({ areaCount: 0, diceCount: 0 }));
+      for (let rid = 0; rid < regionCount; rid++) {
+        const owner = regionOwner[rid];
+        if (owner >= 0) {
+          stats[owner].areaCount++;
+          stats[owner].diceCount += regionDice[rid];
+        }
       }
-      return false;
+      // Sort players by diceCount descending, assign rank
+      const ranking = stats.map((_, idx) => idx);
+      ranking.sort((a, b) => stats[b].diceCount - stats[a].diceCount);
+      const rank = Array(NUM_PLAYERS).fill(0);
+      for (let i = 0; i < ranking.length; i++) {
+        rank[ranking[i]] = i;
+      }
+      return { stats, rank, ranking };
     }
 
-    function getNeighborsHex(idx) {
-      const r = Math.floor(idx / COLS), c = idx % COLS;
-      const results = [];
-      if (c + 1 < COLS) results.push(r * COLS + (c + 1));
-      if (c - 1 >= 0)  results.push(r * COLS + (c - 1));
-
-      if (r % 2 === 0) {
-        if (r - 1 >= 0) {
-          if (c < COLS)   results.push((r - 1) * COLS + c);
-          if (c - 1 >= 0) results.push((r - 1) * COLS + (c - 1));
-        }
-        if (r + 1 < ROWS) {
-          if (c < COLS)   results.push((r + 1) * COLS + c);
-          if (c - 1 >= 0) results.push((r + 1) * COLS + (c - 1));
-        }
-      } else {
-        if (r - 1 >= 0) {
-          if (c + 1 < COLS) results.push((r - 1) * COLS + (c + 1));
-          results.push((r - 1) * COLS + c);
-        }
-        if (r + 1 < ROWS) {
-          if (c + 1 < COLS) results.push((r + 1) * COLS + (c + 1));
-          results.push((r + 1) * COLS + c);
+    // For each region, get neighbor info
+    function analyzeRegion(rid) {
+      let friendly = 0, unfriendly = 0;
+      let highestFriendly = 0, highestUnfriendly = 0, secondHighestUnfriendly = 0;
+      const neighbors = getNeighborRegions(rid);
+      for (const nrid of neighbors) {
+        const owner = regionOwner[nrid];
+        const dice  = regionDice[nrid];
+        if (owner === regionOwner[rid]) {
+          friendly++;
+          if (dice > highestFriendly) highestFriendly = dice;
+        } else if (owner >= 0) {
+          unfriendly++;
+          if (dice > highestUnfriendly) {
+            secondHighestUnfriendly = highestUnfriendly;
+            highestUnfriendly = dice;
+          } else if (dice > secondHighestUnfriendly) {
+            secondHighestUnfriendly = dice;
+          }
+        } else if (owner === -2) {
+          // neutral ruin counts as unfriendly with 0 dice
+          unfriendly++;
+          if (highestUnfriendly < 0) {
+            secondHighestUnfriendly = highestUnfriendly;
+            highestUnfriendly = 0;
+          } else if (0 > secondHighestUnfriendly) {
+            secondHighestUnfriendly = 0;
+          }
         }
       }
-      return results;
+      return {
+        friendly,
+        unfriendly,
+        highestFriendly,
+        highestUnfriendly,
+        secondHighestUnfriendly,
+        neighborCount: neighbors.length
+      };
     }
 
     /**********************************
-     * AI TURN & PERSONALITIES
+     * AI TURN & PERSONALITIES (UPDATED)
      **********************************/
     function aiTurn(aiPlayer) {
-      if (gameOver || aiPlayer === 0) return;
+      if (gameOver || aiPlayer === 0 || anim) return;
 
       const personality = AI_PERSONALITIES[aiPlayer];
-      let validAttacks = [];
+      const { stats, rank, ranking } = computePlayerStats();
 
-      // Scavenger: prioritize adjacent ruins
-      if (personality === 'Scavenger') {
-        for (let i = 0; i < territories.length; i++) {
-          if (territories[i].owner !== aiPlayer || territories[i].dice < 2) continue;
-          const nbrs = getNeighborsHex(i);
-          for (const j of nbrs) {
-            if (territories[j].owner === -2) {
-              validAttacks = [{ attacker: i, defender: j }];
-              break;
+      if (personality === 'Aggressor') {
+        aggressiveAI(aiPlayer, stats, rank, ranking);
+      } else if (personality === 'Turtle') {
+        defensiveAI(aiPlayer);
+      } else if (personality === 'Opportunist') {
+        opportunistAI(aiPlayer);
+      } else if (personality === 'Scavenger') {
+        scavengerAI(aiPlayer);
+      } else {
+        aggressiveAI(aiPlayer, stats, rank, ranking);
+      }
+    }
+
+    // Aggressive AI: prioritizes capturing neutral ruins first, then safe expansions; can chain multiple attacks
+    function aggressiveAI(pn, stats, rank, ranking) {
+      const ruinAttacks = [];
+      const expansionAttacks = [];
+
+      // 1) Scan through AI-owned regions with >1 die
+      for (let rid = 0; rid < regionCount; rid++) {
+        if (regionOwner[rid] !== pn || regionDice[rid] <= 1) continue;
+        const myDice = regionDice[rid];
+        const neighbors = getNeighborRegions(rid);
+
+        for (const nrid of neighbors) {
+          const owner = regionOwner[nrid];
+          const enemyDice = regionDice[nrid] || 1;
+
+          // a) If neighbor is a neutral ruin, capture it if we have ≥2 dice
+          if (owner === -2 && myDice > 1) {
+            ruinAttacks.push({ attacker: rid, defender: nrid });
+          }
+          // b) Otherwise, if neighbor belongs to an opponent and we have > (enemyDice + 1), it's a safe expansion
+          else if (owner >= 0 && owner !== pn) {
+            if (myDice > enemyDice + 1) {
+              expansionAttacks.push({
+                attacker: rid,
+                defender: nrid,
+                margin: myDice - enemyDice
+              });
             }
           }
-          if (validAttacks.length) break;
         }
-        if (validAttacks.length === 0) {
-          validAttacks = collectOpportunistAttacks(aiPlayer);
-        }
-      } else if (personality === 'Aggressor') {
-        validAttacks = collectAggressorAttacks(aiPlayer);
-      } else if (personality === 'Opportunist') {
-        validAttacks = collectOpportunistAttacks(aiPlayer);
-      } else if (personality === 'Turtle') {
-        // Turtle: no attack, only reinforce
-        reinforce(aiPlayer);
-        advanceToNextPlayer();
-        return;
-      } else {
-        validAttacks = collectAggressorAttacks(aiPlayer);
       }
 
-      if (validAttacks.length === 0) {
-        reinforce(aiPlayer);
-        advanceToNextPlayer();
+      // 2) If there are neutral ruins adjacent, attack one at random (chain continues after resolution)
+      if (ruinAttacks.length > 0) {
+        const choice = ruinAttacks[Math.floor(Math.random() * ruinAttacks.length)];
+        startAttackAnimation(choice.attacker, choice.defender);
         return;
       }
 
-      const choice = validAttacks[Math.floor(Math.random() * validAttacks.length)];
-      const { attacker, defender } = choice;
-      const attDiceCount = territories[attacker].dice;
-      const defDiceCount = territories[defender].dice;
+      // 3) Else if there are safe expansions, pick the one with the greatest margin (chain continues)
+      if (expansionAttacks.length > 0) {
+        expansionAttacks.sort((a, b) => b.margin - a.margin);
+        const choice = expansionAttacks[0];
+        startAttackAnimation(choice.attacker, choice.defender);
+        return;
+      }
 
-      const attRollSum = rollDiceSum(attDiceCount);
-      const defRollSum = rollDiceSum(defDiceCount);
+      // 4) If no growth moves remain, reinforce and end turn
+      reinforce(pn);
+      advanceToNextPlayer();
+    }
 
-      if (attRollSum > defRollSum) {
-        const movedDice = attDiceCount - 1;
-        const oldOwner = territories[defender].owner;
-        territories[defender].owner = aiPlayer;
-        territories[defender].dice = movedDice > 0 ? movedDice : 1;
-        territories[attacker].dice = 1;
-        if (oldOwner >= 0) checkElimination(oldOwner);
+    // Defensive/Turtle AI: only attacks if safe, prioritizes strongest safe move
+    function defensiveAI(pn) {
+      const { stats } = computePlayerStats();
+      let bestAttack = null;
+      let bestScore = -Infinity;
+
+      for (let rid = 0; rid < regionCount; rid++) {
+        if (regionOwner[rid] !== pn || regionDice[rid] <= 1) continue;
+        const info = analyzeRegion(rid);
+        const neighbors = getNeighborRegions(rid);
+
+        for (const nrid of neighbors) {
+          const owner = regionOwner[nrid];
+          if (owner === pn) continue;
+          const enemyDice = regionDice[nrid] || 1;
+          // Must have enough dice to overcome enemyDice + 1
+          if (regionDice[rid] < enemyDice + 1) continue;
+          // Avoid capturing if it opens to too strong a counter
+          if (info.highestFriendly > enemyDice) continue;
+          if (stats[pn].areaCount > 4 && info.secondHighestUnfriendly > 2) continue;
+          // Score: prefer capturing high-dice neighbors with fewer neighbors
+          const score = (enemyDice * 2) - analyzeRegion(nrid).neighborCount;
+          if (score > bestScore) {
+            bestScore = score;
+            bestAttack = { attacker: rid, defender: nrid };
+          }
+        }
+      }
+
+      if (bestAttack) {
+        startAttackAnimation(bestAttack.attacker, bestAttack.defender);
       } else {
-        // Penalty: lose all but one die
-        territories[attacker].dice = 1;
+        reinforce(pn);
+        advanceToNextPlayer();
       }
-
-      setTimeout(() => {
-        if (!gameOver) aiTurn(aiPlayer);
-        else advanceToNextPlayer();
-      }, 100);
     }
 
-    function collectAggressorAttacks(player) {
-      const attacks = [];
-      for (let i = 0; i < territories.length; i++) {
-        const cell = territories[i];
-        if (cell.owner !== player || cell.dice <= 1) continue;
-        const nbrs = getNeighborsHex(i);
-        for (const j of nbrs) {
-          const neighbor = territories[j];
-          // If neighbor is human (0), attack whenever cell.dice > 1
-          if (neighbor.owner === 0 && cell.dice > 1) {
-            attacks.push({ attacker: i, defender: j });
-          }
-          // Otherwise, existing condition
-          else if (neighbor.owner >= 1 && neighbor.owner !== player && cell.dice >= neighbor.dice) {
-            attacks.push({ attacker: i, defender: j });
-          }
-          // Ruin capture
-          if (neighbor.owner === -2 && cell.dice >= 2) {
-            attacks.push({ attacker: i, defender: j });
+    // Opportunist AI: only attacks when has ≥2 dice advantage
+    function opportunistAI(pn) {
+      const candidateAttacks = [];
+      for (let rid = 0; rid < regionCount; rid++) {
+        if (regionOwner[rid] !== pn || regionDice[rid] <= 1) continue;
+        const neighbors = getNeighborRegions(rid);
+        for (const nrid of neighbors) {
+          const owner = regionOwner[nrid];
+          if (owner === pn) continue;
+          const enemyDice = regionDice[nrid] || 1;
+          if (regionDice[rid] >= enemyDice + 2) {
+            candidateAttacks.push({ attacker: rid, defender: nrid });
           }
         }
       }
-      return attacks;
+      if (candidateAttacks.length === 0) {
+        reinforce(pn);
+        advanceToNextPlayer();
+        return;
+      }
+      const choice = candidateAttacks[Math.floor(Math.random() * candidateAttacks.length)];
+      startAttackAnimation(choice.attacker, choice.defender);
     }
 
-    function collectOpportunistAttacks(player) {
-      const attacks = [];
-      for (let i = 0; i < territories.length; i++) {
-        const cell = territories[i];
-        if (cell.owner !== player || cell.dice <= 1) continue;
-        const nbrs = getNeighborsHex(i);
-        for (const j of nbrs) {
-          const neighbor = territories[j];
-          // If neighbor is human, require only cell.dice > competitor.dice - 1 (i.e., one-die advantage)
-          if (neighbor.owner === 0 && cell.dice >= neighbor.dice + 1) {
-            attacks.push({ attacker: i, defender: j });
-          }
-          else if (neighbor.owner >= 1 && neighbor.owner !== player && cell.dice >= neighbor.dice + 2) {
-            attacks.push({ attacker: i, defender: j });
-          }
-          // Ruin capture
-          if (neighbor.owner === -2 && cell.dice >= 3) {
-            attacks.push({ attacker: i, defender: j });
+    // Scavenger AI: prioritize capturing neutral ruins, else use opportunist logic
+    function scavengerAI(pn) {
+      for (let rid = 0; rid < regionCount; rid++) {
+        if (regionOwner[rid] !== pn || regionDice[rid] < 2) continue;
+        const neighbors = getNeighborRegions(rid);
+        for (const nrid of neighbors) {
+          if (regionOwner[nrid] === -2) {
+            startAttackAnimation(rid, nrid);
+            return;
           }
         }
       }
-      return attacks;
-    }
-
-    function rollDiceSum(count) {
-      let sum = 0;
-      for (let i = 0; i < count; i++) {
-        sum += Math.floor(Math.random() * 6) + 1;
-      }
-      return sum;
+      opportunistAI(pn);
     }
 
     /**********************************
