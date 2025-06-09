@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Hex Dice Wars — Smarter Reinforcements & Dice Cap</title>
+  <title>Hex Dice Wars — Summary & Replay</title>
   <style>
     html, body { margin:0; padding:0; background:#eeeeee; font-family:sans-serif; overflow:hidden; }
     #controls { position:absolute; top:10px; left:10px; z-index:10; }
@@ -45,6 +45,19 @@
     #toggleLog { width:100%; margin-bottom:4px; }
     #moveLog { max-height:150px; overflow-y:auto; display:none; border-top:1px solid #ccc; padding-top:4px;}
     #moveLog div { margin-bottom:2px; }
+
+    /* Endgame overlay */
+    #endOverlay {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      background:rgba(0,0,0,0.8); display:none;
+      justify-content:center; align-items:center; z-index:200;
+    }
+    #endOverlay .content {
+      background:#fff; padding:20px; border-radius:8px;
+      text-align:center; width:300px;
+    }
+    #endOverlay h2 { margin-top:0; }
+    #endOverlay button { margin-top:12px; padding:8px 16px; }
   </style>
 </head>
 <body>
@@ -68,6 +81,13 @@
     <button id="toggleLog">Show Move Log</button>
     <div id="moveLog"></div>
   </div>
+  <div id="endOverlay">
+    <div class="content">
+      <h2 id="endTitle">Game Over</h2>
+      <div id="summaryStats"></div>
+      <button id="replayBtn">Play Again</button>
+    </div>
+  </div>
 
   <script>
   (function(){
@@ -81,7 +101,7 @@
     let NUM_PLAYERS=2, PLAYER_COLORS=FULL_COLORS.slice(0,2);
     let landGrid, territories, regionCount, regionOwner, regionDice;
     let currentPlayer=0, selectedRegion=null, gameOver=false, winner=null;
-    let anim=null, moveLog=[], lastStats=null;
+    let anim=null, moveLog=[], lastStats=null, turnCount=0;
 
     // CANVAS SETUP
     const canvas=document.getElementById('gameCanvas'), ctx=canvas.getContext('2d');
@@ -99,7 +119,11 @@
           scoreboard=document.getElementById('scoreboard'),
           toggleLog=document.getElementById('toggleLog'),
           moveLogDiv=document.getElementById('moveLog'),
-          diceResultDiv=document.getElementById('diceResult');
+          diceResultDiv=document.getElementById('diceResult'),
+          endOverlay=document.getElementById('endOverlay'),
+          endTitle=document.getElementById('endTitle'),
+          summaryStats=document.getElementById('summaryStats'),
+          replayBtn=document.getElementById('replayBtn');
 
     // HELPERS
     function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
@@ -109,10 +133,7 @@
       for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
         if(!g[r][c]) continue;
         let count=0;
-        for(const [dr,dc] of DIRS4){
-          const nr=r+dr,nc=c+dc;
-          if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) count++;
-        }
+        DIRS4.forEach(([dr,dc])=>{ const nr=r+dr,nc=c+dc; if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) count++; });
         if(count===0) toRem.push([r,c]);
       }
       toRem.forEach(([r,c])=>g[r][c]=false);
@@ -211,7 +232,6 @@
           t.region=rid; t.owner=regionOwner[rid]; t.dice=regionDice[rid];
         }
       });
-      // Neutral ruins
       const uniq=[...new Set(rmap.filter(r=>r>=0))];
       shuffle(uniq);
       const ruinCount=Math.max(1,Math.floor(uniq.length*0.02));
@@ -223,9 +243,11 @@
       });
 
       currentPlayer=0; selectedRegion=null; gameOver=false; anim=null;
+      turnCount=0;
       PLAYER_COLORS=FULL_COLORS.slice(0,NUM_PLAYERS);
       lastStats=computeStats(); moveLog=[];
       renderLog(); updateScoreboard(); updateStatus(); draw();
+      endOverlay.style.display='none';
     }
 
     // DRAW
@@ -323,7 +345,7 @@
       return {r,c};
     }
 
-    // SCOREBOARD & MOVE LOG
+    // SCOREBOARD & LOG
     function updateScoreboard(){
       const st=computeStats();
       scoreboard.innerHTML='';
@@ -343,9 +365,9 @@
       lastStats=st.map(s=>({dice:s.dice,regions:s.regions}));
     }
     toggleLog.addEventListener('click',()=>{
-      const show=moveLogDiv.style.display==='none';
-      moveLogDiv.style.display=show?'block':'none';
-      toggleLog.textContent=show?'Hide Move Log':'Show Move Log';
+      const sh=moveLogDiv.style.display==='none';
+      moveLogDiv.style.display=sh?'block':'none';
+      toggleLog.textContent=sh?'Hide Move Log':'Show Move Log';
     });
     function logMove(txt){
       moveLog.unshift(txt);
@@ -373,6 +395,7 @@
       if(gameOver){
         statusText.textContent=`Player ${winner+1} wins!`;
         endTurnBtn.disabled=true;
+        showEndOverlay();
       } else if(currentPlayer===0){
         statusText.textContent='Your turn. Select or End Turn.';
         endTurnBtn.disabled=false;
@@ -385,121 +408,129 @@
     function advancePlayer(){
       updateScoreboard();
       let np=(currentPlayer+1)%NUM_PLAYERS, tries=0;
-      while(!regionOwner.includes(np) && tries<NUM_PLAYERS){
+      while(!regionOwner.includes(np)&&tries<NUM_PLAYERS){
         np=(np+1)%NUM_PLAYERS; tries++;
       }
-      currentPlayer=np; checkGameOver(); selectedRegion=null;
-      updateStatus(); draw();
+      currentPlayer=np;
+      if(currentPlayer===0) turnCount++;
+      checkGameOver();
+      selectedRegion=null;
+      updateStatus();
+      draw();
     }
     function checkGameOver(){
-      const owners=new Set(regionOwner.filter(o=>o>=0));
-      if(owners.size===1){ gameOver=true; winner=[...owners][0]; }
+      const os=new Set(regionOwner.filter(o=>o>=0));
+      if(os.size===1){ gameOver=true; winner=[...os][0]; }
     }
 
     // SMART REINFORCEMENTS
     function reinforce(player){
-      // total reinforcements = floor(#regions / 2), min 1
-      const owned = regionOwner
-        .map((o,i)=>o===player? i : -1)
+      const owned=regionOwner
+        .map((o,i)=>o===player?i:-1)
         .filter(i=>i>=0);
-      let reinf = Math.max(1, Math.floor(owned.length/2));
-      // compute threat for each
-      const threats = owned.map(rid=>{
-        const enemyAdj = getNeighborRegions(rid)
-          .filter(nrid=> regionOwner[nrid]>=0 && regionOwner[nrid]!==player)
-          .length;
-        return { rid, threat: enemyAdj };
+      let reinf=Math.max(1,Math.floor(owned.length/2));
+      const threats=owned.map(rid=>{
+        const ennemies=getNeighborRegions(rid)
+          .filter(n=>regionOwner[n]>=0&&regionOwner[n]!==player).length;
+        return {rid,threat:ennemies};
       });
-      // sort by threat desc, id as tiebreaker
-      threats.sort((a,b)=> b.threat - a.threat );
-      // allocate one by one, capping at MAX_DICE
+      threats.sort((a,b)=>b.threat-a.threat);
       while(reinf>0){
-        let gave = false;
+        let gave=false;
         for(const t of threats){
           if(reinf===0) break;
-          if(regionDice[t.rid] < MAX_DICE){
-            regionDice[t.rid] = Math.min(regionDice[t.rid]+1, MAX_DICE);
-            reinf--; gave = true;
+          if(regionDice[t.rid]<MAX_DICE){
+            regionDice[t.rid]=Math.min(regionDice[t.rid]+1,MAX_DICE);
+            reinf--; gave=true;
           }
         }
-        if(!gave) break; // all at cap
+        if(!gave) break;
       }
-      // update territories
       territories.forEach(t=>{
-        if(t.region>=0 && regionOwner[t.region]>=0){
-          t.dice = regionDice[t.region];
+        if(t.region>=0&&regionOwner[t.region]>=0){
+          t.dice=regionDice[t.region];
         }
       });
     }
 
     // ATTACK ANIMATION & RESOLUTION
     function startAtk(aRID,dRID){
-      const A = regionDice[aRID], D = regionDice[dRID]||1;
-      const rA = Array.from({length:A},()=>Math.floor(Math.random()*6)+1),
-            rD = Array.from({length:D},()=>Math.floor(Math.random()*6)+1);
-      const sA = rA.reduce((a,b)=>a+b,0), sD = rD.reduce((a,b)=>a+b,0);
-      anim = { aRID, dRID, frames:ANIM_FRAMES, sA, sD, done:false };
+      const A=regionDice[aRID], D=regionDice[dRID]||1;
+      const rA=Array.from({length:A},()=>Math.floor(Math.random()*6)+1),
+            rD=Array.from({length:D},()=>Math.floor(Math.random()*6)+1);
+      const sA=rA.reduce((a,b)=>a+b,0), sD=rD.reduce((a,b)=>a+b,0);
+      anim={aRID,dRID,frames:ANIM_FRAMES,sA,sD,done:false};
       updateStatus();
     }
     function drawDiceAnim(){
-      if(anim.frames>1){
-        anim.frames--; draw();
-      } else if(!anim.done){
-        anim.done=true; draw();
-      } else {
-        resolveAtk();
-      }
+      if(anim.frames>1){ anim.frames--; draw(); }
+      else if(!anim.done){ anim.done=true; draw(); }
+      else { resolveAtk(); }
     }
     function resolveAtk(){
-      const { aRID, dRID, sA, sD } = anim;
-      const oldA = regionDice[aRID], oldD = regionDice[dRID]||1;
-      const attackerWon = sA > sD;
+      const {aRID,dRID,sA,sD}=anim;
+      const oldA=regionDice[aRID], oldD=regionDice[dRID]||1;
+      const win=sA>sD;
       let msg;
-      if(attackerWon){
-        // moved dice = oldA-1, cap MAX_DICE
-        let mv = Math.max(1, oldA-1);
-        mv = Math.min(mv, MAX_DICE);
-        regionOwner[dRID] = regionOwner[aRID];
-        regionDice[dRID] = mv;
-        regionDice[aRID] = 1;
-        msg = (currentPlayer===0?'You':'AI '+currentPlayer)
-            + ` win (${sA} vs ${sD})`;
+      if(win){
+        let mv=Math.max(1,oldA-1);
+        mv=Math.min(mv,MAX_DICE);
+        regionOwner[dRID]=regionOwner[aRID];
+        regionDice[dRID]=mv;
+        regionDice[aRID]=1;
+        msg=(currentPlayer===0?'You':'AI '+currentPlayer)+` win (${sA} vs ${sD})`;
       } else {
-        regionDice[aRID] = 1;
-        msg = (currentPlayer===0?'You':'AI '+currentPlayer)
-            + ` lose (${sA} vs ${sD})`;
+        regionDice[aRID]=1;
+        msg=(currentPlayer===0?'You':'AI '+currentPlayer)+` lose (${sA} vs ${sD})`;
       }
-      // ensure cap
-      regionDice[aRID] = Math.min(regionDice[aRID], MAX_DICE);
-      regionDice[dRID] = Math.min(regionDice[dRID], MAX_DICE);
-      showDiceResult(msg);
-      logMove(`[Move] ${msg}`);
-      // update territories
+      showDiceResult(msg); logMove(`[Move] ${msg}`);
       territories.forEach(t=>{
         if(t.region>=0){
-          t.owner = regionOwner[t.region];
-          t.dice  = regionDice[t.region];
+          t.owner=regionOwner[t.region];
+          t.dice=regionDice[t.region];
         }
       });
-      anim = null;
-      draw();
-      updateStatus();
+      anim=null; draw(); updateStatus();
     }
 
-    // AI TURN
+    // AI TURN (Aggressor + others)
     function aiTurn(pn){
-      for(let rid=0; rid<regionCount; rid++){
-        if(regionOwner[rid]===pn && regionDice[rid]>1){
-          for(const nr of getNeighborRegions(rid)){
-            if(regionOwner[nr]>=0 && regionOwner[nr]!==pn
-               && regionDice[rid] > regionDice[nr]+1){
-              startAtk(rid,nr); return;
+      if(PERSONALITIES[(pn-1)%4]==='Aggressor'){
+        const ruinAttacks=[], expAttacks=[];
+        for(let r=0;r<regionCount;r++){
+          if(regionOwner[r]!==pn||regionDice[r]<=1) continue;
+          const myD=regionDice[r];
+          for(const nr of getNeighborRegions(r)){
+            const o=regionOwner[nr], eD=regionDice[nr]||1;
+            if(o===-2 && myD>1) ruinAttacks.push({a:r,d:nr});
+            else if(o>=0&&o!==pn){
+              if(myD>eD+1) expAttacks.push({a:r,d:nr,margin:myD-eD});
+              else if(myD===MAX_DICE&&eD===MAX_DICE) expAttacks.push({a:r,d:nr,margin:0});
+            }
+          }
+        }
+        if(ruinAttacks.length){
+          const c=ruinAttacks[Math.floor(Math.random()*ruinAttacks.length)];
+          startAtk(c.a,c.d); return;
+        }
+        if(expAttacks.length){
+          expAttacks.sort((a,b)=>b.margin-a.margin);
+          const c=expAttacks[0];
+          startAtk(c.a,c.d); return;
+        }
+        reinforce(pn); advancePlayer(); return;
+      }
+      // fallback: simple opportunist
+      for(let r=0;r<regionCount;r++){
+        if(regionOwner[r]===pn&&regionDice[r]>1){
+          for(const nr of getNeighborRegions(r)){
+            if(regionOwner[nr]>=0&&regionOwner[nr]!==pn&&regionDice[r]>regionDice[nr]+1){
+              startAtk(r,nr); return;
             }
           }
         }
       }
-      reinforce(pn);
-      advancePlayer();
+      reinforce(pn); advancePlayer();
     }
 
     // INPUT HANDLERS
@@ -509,37 +540,35 @@
       const mx=e.clientX-rect.left, my=e.clientY-rect.top;
       const cell=pxToHex(mx,my);
       if(!cell) return;
-      const idx=cell.r*COLS+cell.c, rid=territories[idx].region;
-      if(rid<0) return;
-      if(regionOwner[rid]===0 && regionDice[rid]>1){
-        selectedRegion = (selectedRegion===rid? null: rid);
+      const idx=cell.r*COLS+cell.c, rr=territories[idx].region;
+      if(rr<0) return;
+      if(regionOwner[rr]===0&&regionDice[rr]>1){
+        selectedRegion=(selectedRegion===rr?null:rr);
         draw(); return;
       }
-      if(selectedRegion!==null && getNeighborRegions(selectedRegion).includes(rid)){
-        startAtk(selectedRegion, rid);
+      if(selectedRegion!==null && getNeighborRegions(selectedRegion).includes(rr)){
+        startAtk(selectedRegion,rr);
       }
     });
     endTurnBtn.addEventListener('click',()=>{
-      if(currentPlayer===0 && !anim){
-        reinforce(0);
-        advancePlayer();
+      if(currentPlayer===0&&!anim){
+        reinforce(0); advancePlayer();
       }
     });
     newMapBtn.addEventListener('click',()=>{
-      NUM_PLAYERS = 1 + parseInt(aiCountSelect.value);
+      NUM_PLAYERS=1+parseInt(aiCountSelect.value);
       initGame();
     });
 
     toggleLog.addEventListener('click',()=>{
-      const show = moveLogDiv.style.display==='none';
-      moveLogDiv.style.display=show?'block':'none';
-      toggleLog.textContent=show?'Hide Move Log':'Show Move Log';
+      const sh=moveLogDiv.style.display==='none';
+      moveLogDiv.style.display=sh?'block':'none';
+      toggleLog.textContent=sh?'Hide Move Log':'Show Move Log';
     });
     function renderLog(){
       moveLogDiv.innerHTML='';
       moveLog.forEach(t=>{
-        const d=document.createElement('div');
-        d.textContent=t;
+        const d=document.createElement('div'); d.textContent=t;
         moveLogDiv.appendChild(d);
       });
     }
@@ -552,9 +581,28 @@
       return {r,c};
     }
 
+    // ENDGAME OVERLAY
+    function showEndOverlay(){
+      endOverlay.style.display='flex';
+      endTitle.textContent = (winner===0?'You Win!':'AI '+winner+' Wins!');
+      // build summary
+      const stats=computeStats();
+      const totalMoves = moveLog.length;
+      let html = `<p><strong>Turns Played:</strong> ${turnCount}</p>
+                  <p><strong>Total Attacks:</strong> ${totalMoves}</p>
+                  <h4>Final Stats</h4>`;
+      stats.forEach((s,i)=>{
+        html+=`<p style="color:${PLAYER_COLORS[i]};">
+                 ${i===0?'You':`AI ${i}`}: Dice ${s.dice}, Regions ${s.regions}
+               </p>`;
+      });
+      summaryStats.innerHTML = html;
+    }
+    replayBtn.addEventListener('click',()=> initGame());
+
     // START
     initGame();
-    setInterval(draw, 1000/FPS);
+    setInterval(draw,1000/FPS);
 
   })();
   </script>
