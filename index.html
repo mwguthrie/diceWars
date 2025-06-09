@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Hex Dice Wars with Tooltips, Move Log & Selection Outline</title>
+  <title>Hex Dice Wars — Smarter Reinforcements & Dice Cap</title>
   <style>
     html, body { margin:0; padding:0; background:#eeeeee; font-family:sans-serif; overflow:hidden; }
     #controls { position:absolute; top:10px; left:10px; z-index:10; }
@@ -71,25 +71,26 @@
 
   <script>
   (function(){
-    // -- Config & State --
+    // CONFIG & STATE
     const ROWS=20, COLS=30, FPS=30, ANIM_FRAMES=15;
     const FULL_COLORS=['#3B83BD','#BD3B3B','#3BBD3B','#BDBD3B','#8A2BE2','#FFA500'];
     const WATER='#D0EFFF', DIRS4=[[-1,0],[1,0],[0,-1],[0,1]];
     const PERSONALITIES=['Aggressor','Turtle','Opportunist','Scavenger'];
+    const MAX_DICE=12;
 
     let NUM_PLAYERS=2, PLAYER_COLORS=FULL_COLORS.slice(0,2);
     let landGrid, territories, regionCount, regionOwner, regionDice;
     let currentPlayer=0, selectedRegion=null, gameOver=false, winner=null;
     let anim=null, moveLog=[], lastStats=null;
 
-    // -- Canvas Setup --
+    // CANVAS SETUP
     const canvas=document.getElementById('gameCanvas'), ctx=canvas.getContext('2d');
     const cw=canvas.width, ch=canvas.height;
     const HEX_R=Math.floor((cw/(COLS+0.5))/Math.sqrt(3));
     const HEX_W=Math.sqrt(3)*HEX_R, HEX_H=2*HEX_R, VSP=HEX_H*0.75;
     const xOff=(cw-((COLS*HEX_W)+(HEX_W/2)))/2, yOff=(ch-(((ROWS-1)*VSP)+HEX_H))/2;
 
-    // -- UI Elements --
+    // UI ELEMENTS
     const aiCountSelect=document.getElementById('aiCountSelect'),
           newMapBtn=document.getElementById('newMapBtn'),
           endTurnBtn=document.getElementById('endTurnBtn'),
@@ -100,29 +101,35 @@
           moveLogDiv=document.getElementById('moveLog'),
           diceResultDiv=document.getElementById('diceResult');
 
-    // -- Helpers --
-    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=~~(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
-    function createGrid(r,c){ let g=[]; for(let i=0;i<r;i++) g.push(Array(c).fill(false)); return g; }
+    // HELPERS
+    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
+    function createGrid(r,c){ const g=[]; for(let i=0;i<r;i++) g.push(Array(c).fill(false)); return g; }
     function removeIsolated(g){
       const toRem=[];
       for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
         if(!g[r][c]) continue;
-        let cnt=0;
-        DIRS4.forEach(([dr,dc])=>{ const nr=r+dr,nc=c+dc; if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) cnt++; });
-        if(cnt===0) toRem.push([r,c]);
+        let count=0;
+        for(const [dr,dc] of DIRS4){
+          const nr=r+dr,nc=c+dc;
+          if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) count++;
+        }
+        if(count===0) toRem.push([r,c]);
       }
       toRem.forEach(([r,c])=>g[r][c]=false);
     }
     function genLand(){
       let g=createGrid(ROWS,COLS);
-      const seeds=~~(ROWS*COLS*0.04)||1;
-      for(let i=0;i<seeds;i++) g[~~(Math.random()*ROWS)][~~(Math.random()*COLS)]=true;
+      const seeds=Math.max(1,Math.floor(ROWS*COLS*0.04));
+      for(let i=0;i<seeds;i++) g[Math.floor(Math.random()*ROWS)][Math.floor(Math.random()*COLS)]=true;
       for(let pass=0;pass<6;pass++){
         const ng=g.map(r=>r.slice());
         for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
           if(g[r][c]) continue;
           let n=0;
-          DIRS4.forEach(([dr,dc])=>{ const nr=r+dr,nc=c+dc; if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) n++; });
+          for(const [dr,dc] of DIRS4){
+            const nr=r+dr,nc=c+dc;
+            if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) n++;
+          }
           if(n>0 && Math.random()<1-Math.pow(0.6,n)) ng[r][c]=true;
         }
         g=ng; removeIsolated(g);
@@ -132,30 +139,27 @@
     }
     function partitionRegions(){
       const total=ROWS*COLS, map=Array(total).fill(-1), landIdx=[];
-      for(let i=0;i<total;i++){ const r=~~(i/COLS), c=i%COLS; if(landGrid[r][c]) landIdx.push(i); }
-      regionCount=~~(landIdx.length/5)||1;
+      for(let i=0;i<total;i++){ const r=Math.floor(i/COLS),c=i%COLS; if(landGrid[r][c]) landIdx.push(i); }
+      regionCount=Math.max(1,Math.floor(landIdx.length/5));
       shuffle(landIdx);
       const seeds=landIdx.slice(0,regionCount), queue=seeds.slice();
       seeds.forEach((i,r)=>map[i]=r);
       while(queue.length){
-        const i=queue.shift();
-        const r0=~~(i/COLS), c0=i%COLS;
-        DIRS4.forEach(([dr,dc])=>{
+        const i=queue.shift(), r0=Math.floor(i/COLS), c0=i%COLS;
+        for(const [dr,dc] of DIRS4){
           const nr=r0+dr,nc=c0+dc, ni=nr*COLS+nc;
-          if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS && map[ni]===-1 && landGrid[nr][nc]){
-            map[ni]=map[i];
-            queue.push(ni);
+          if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&map[ni]===-1&&landGrid[nr][nc]){
+            map[ni]=map[i]; queue.push(ni);
           }
-        });
+        }
       }
       landIdx.forEach(i=>{
         if(map[i]===-1){
-          const r0=~~(i/COLS), c0=i%COLS;
+          const r0=Math.floor(i/COLS), c0=i%COLS;
           for(const [dr,dc] of DIRS4){
             const nr=r0+dr,nc=c0+dc, ni=nr*COLS+nc;
-            if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS && map[ni]>=0){
-              map[i]=map[ni];
-              break;
+            if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&map[ni]>=0){
+              map[i]=map[ni]; break;
             }
           }
         }
@@ -163,11 +167,11 @@
       return map;
     }
     function getNeighborsHex(i){
-      const r=~~(i/COLS), c=i%COLS, out=[];
-      DIRS4.forEach(([dr,dc])=>{
+      const r=Math.floor(i/COLS), c=i%COLS, out=[];
+      for(const [dr,dc] of DIRS4){
         const nr=r+dr,nc=c+dc;
         if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS) out.push(nr*COLS+nc);
-      });
+      }
       return out;
     }
     function getNeighborRegions(rid){
@@ -182,15 +186,15 @@
       return [...s];
     }
     function computeStats(){
-      const stat=Array.from({length:NUM_PLAYERS},()=>({dice:0,regions:0}));
+      const stats=Array.from({length:NUM_PLAYERS},()=>({dice:0,regions:0}));
       for(let r=0;r<regionCount;r++){
         const o=regionOwner[r];
-        if(o>=0){ stat[o].regions++; stat[o].dice+=regionDice[r]; }
+        if(o>=0){ stats[o].regions++; stats[o].dice+=regionDice[r]; }
       }
-      return stat;
+      return stats;
     }
 
-    // -- Init Game --
+    // INITIALIZE
     function initGame(){
       landGrid=genLand();
       territories=Array(ROWS*COLS).fill().map(_=>({owner:-1,dice:0,region:-1}));
@@ -199,7 +203,7 @@
       regionDice=Array(regionCount).fill(0);
       for(let r=0;r<regionCount;r++){
         regionOwner[r]=r%NUM_PLAYERS;
-        regionDice[r]=~~(Math.random()*8)+1;
+        regionDice[r]=Math.floor(Math.random()*8)+1;
       }
       territories.forEach((t,i)=>{
         const rid=rmap[i];
@@ -207,31 +211,24 @@
           t.region=rid; t.owner=regionOwner[rid]; t.dice=regionDice[rid];
         }
       });
-      // neutral ruins
+      // Neutral ruins
       const uniq=[...new Set(rmap.filter(r=>r>=0))];
       shuffle(uniq);
-      const ruinCnt=~~(uniq.length*0.02)||1;
-      uniq.slice(0,ruinCnt).forEach(r=>regionOwner[r]=-2);
+      const ruinCount=Math.max(1,Math.floor(uniq.length*0.02));
+      uniq.slice(0,ruinCount).forEach(r=>regionOwner[r]=-2);
       territories.forEach(t=>{
         if(t.region>=0 && regionOwner[t.region]===-2){
           t.owner=-2; t.dice=0;
         }
       });
 
-      currentPlayer=0;
-      selectedRegion=null;
-      gameOver=false;
-      anim=null;
+      currentPlayer=0; selectedRegion=null; gameOver=false; anim=null;
       PLAYER_COLORS=FULL_COLORS.slice(0,NUM_PLAYERS);
-      lastStats=computeStats();
-      moveLog=[];
-      renderLog();
-      updateScoreboard();
-      updateStatus();
-      draw();
+      lastStats=computeStats(); moveLog=[];
+      renderLog(); updateScoreboard(); updateStatus(); draw();
     }
 
-    // -- Drawing --
+    // DRAW
     function draw(){
       ctx.clearRect(0,0,cw,ch);
       for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
@@ -240,21 +237,16 @@
           drawHex(cx,cy,HEX_R,WATER);
         } else if(t.owner===-2){
           drawHex(cx,cy,HEX_R,'#aaa');
-          ctx.fillStyle='#000';
-          ctx.font=`${HEX_R}px sans-serif`;
-          ctx.textAlign='center';
-          ctx.textBaseline='middle';
+          ctx.fillStyle='#000'; ctx.font=`${HEX_R}px sans-serif`;
+          ctx.textAlign='center'; ctx.textBaseline='middle';
           ctx.fillText('★',cx,cy);
         } else {
           drawHex(cx,cy,HEX_R,PLAYER_COLORS[t.owner]);
-          // White outline on selected region
           if(t.region===selectedRegion && currentPlayer===0 && !anim && !gameOver){
             drawHexOutline(cx,cy,HEX_R,'#fff',3);
           }
-          ctx.fillStyle='#000';
-          ctx.font=`${HEX_R*0.9}px sans-serif`;
-          ctx.textAlign='center';
-          ctx.textBaseline='middle';
+          ctx.fillStyle='#000'; ctx.font=`${HEX_R*0.9}px sans-serif`;
+          ctx.textAlign='center'; ctx.textBaseline='middle';
           ctx.fillText(t.dice,cx,cy);
         }
       }
@@ -263,12 +255,11 @@
     function drawHex(x,y,r,col){
       ctx.beginPath();
       for(let i=0;i<6;i++){
-        const ang=-Math.PI/2 + i*(Math.PI/3);
+        const ang=-Math.PI/2+i*(Math.PI/3);
         const px=x+r*Math.cos(ang), py=y+r*Math.sin(ang);
         i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
       }
-      ctx.closePath();
-      ctx.fillStyle=col; ctx.fill();
+      ctx.closePath(); ctx.fillStyle=col; ctx.fill();
       ctx.strokeStyle='#555'; ctx.lineWidth=1; ctx.stroke();
     }
     function drawHexOutline(x,y,r,col,th){
@@ -278,10 +269,7 @@
         const px=x+r*Math.cos(ang), py=y+r*Math.sin(ang);
         i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
       }
-      ctx.closePath();
-      ctx.strokeStyle=col;
-      ctx.lineWidth=th;
-      ctx.stroke();
+      ctx.closePath(); ctx.strokeStyle=col; ctx.lineWidth=th; ctx.stroke();
     }
     function hexCenter(r,c){
       const cx=xOff+HEX_W*(c+0.5+0.5*(r%2)),
@@ -289,7 +277,7 @@
       return {cx,cy};
     }
 
-    // -- Tooltip --
+    // TOOLTIP
     canvas.addEventListener('mousemove',e=>{
       const rect=canvas.getBoundingClientRect();
       const mx=e.clientX-rect.left, my=e.clientY-rect.top;
@@ -329,13 +317,13 @@
     }
     function pxToHex(mx,my){
       const py=my-yOff; if(py<0) return null;
-      const r=~~(py/VSP); if(r<0||r>=ROWS) return null;
+      const r=Math.floor(py/VSP); if(r<0||r>=ROWS) return null;
       const px=mx-xOff, off=(r%2?HEX_W/2:0);
-      const c=~~((px-off)/HEX_W); if(c<0||c>=COLS) return null;
+      const c=Math.floor((px-off)/HEX_W); if(c<0||c>=COLS) return null;
       return {r,c};
     }
 
-    // -- Scoreboard & Log --
+    // SCOREBOARD & MOVE LOG
     function updateScoreboard(){
       const st=computeStats();
       scoreboard.innerHTML='';
@@ -355,9 +343,9 @@
       lastStats=st.map(s=>({dice:s.dice,regions:s.regions}));
     }
     toggleLog.addEventListener('click',()=>{
-      const sh=moveLogDiv.style.display==='none';
-      moveLogDiv.style.display=sh?'block':'none';
-      toggleLog.textContent=sh?'Hide Move Log':'Show Move Log';
+      const show=moveLogDiv.style.display==='none';
+      moveLogDiv.style.display=show?'block':'none';
+      toggleLog.textContent=show?'Hide Move Log':'Show Move Log';
     });
     function logMove(txt){
       moveLog.unshift(txt);
@@ -373,14 +361,14 @@
       });
     }
 
-    // -- Dice Popup --
+    // DICE POPUP
     function showDiceResult(msg){
       diceResultDiv.textContent=msg;
       diceResultDiv.classList.add('show');
       setTimeout(()=>diceResultDiv.classList.remove('show'),2000);
     }
 
-    // -- Turn & Attack --
+    // TURN & ATTACK
     function updateStatus(){
       if(gameOver){
         statusText.textContent=`Player ${winner+1} wins!`;
@@ -396,22 +384,61 @@
     }
     function advancePlayer(){
       updateScoreboard();
-      let np=(currentPlayer+1)%NUM_PLAYERS, it=0;
-      while(!regionOwner.includes(np)&&it<NUM_PLAYERS){ np=(np+1)%NUM_PLAYERS; it++; }
+      let np=(currentPlayer+1)%NUM_PLAYERS, tries=0;
+      while(!regionOwner.includes(np) && tries<NUM_PLAYERS){
+        np=(np+1)%NUM_PLAYERS; tries++;
+      }
       currentPlayer=np; checkGameOver(); selectedRegion=null;
       updateStatus(); draw();
     }
     function checkGameOver(){
-      const os=new Set(regionOwner.filter(o=>o>=0));
-      if(os.size===1){ gameOver=true; winner=[...os][0]; }
+      const owners=new Set(regionOwner.filter(o=>o>=0));
+      if(owners.size===1){ gameOver=true; winner=[...owners][0]; }
     }
 
+    // SMART REINFORCEMENTS
+    function reinforce(player){
+      // total reinforcements = floor(#regions / 2), min 1
+      const owned = regionOwner
+        .map((o,i)=>o===player? i : -1)
+        .filter(i=>i>=0);
+      let reinf = Math.max(1, Math.floor(owned.length/2));
+      // compute threat for each
+      const threats = owned.map(rid=>{
+        const enemyAdj = getNeighborRegions(rid)
+          .filter(nrid=> regionOwner[nrid]>=0 && regionOwner[nrid]!==player)
+          .length;
+        return { rid, threat: enemyAdj };
+      });
+      // sort by threat desc, id as tiebreaker
+      threats.sort((a,b)=> b.threat - a.threat );
+      // allocate one by one, capping at MAX_DICE
+      while(reinf>0){
+        let gave = false;
+        for(const t of threats){
+          if(reinf===0) break;
+          if(regionDice[t.rid] < MAX_DICE){
+            regionDice[t.rid] = Math.min(regionDice[t.rid]+1, MAX_DICE);
+            reinf--; gave = true;
+          }
+        }
+        if(!gave) break; // all at cap
+      }
+      // update territories
+      territories.forEach(t=>{
+        if(t.region>=0 && regionOwner[t.region]>=0){
+          t.dice = regionDice[t.region];
+        }
+      });
+    }
+
+    // ATTACK ANIMATION & RESOLUTION
     function startAtk(aRID,dRID){
-      const A=regionDice[aRID], D=regionDice[dRID]||1;
-      const rA=Array.from({length:A},()=>Math.floor(Math.random()*6)+1),
-            rD=Array.from({length:D},()=>Math.floor(Math.random()*6)+1);
-      const sA=rA.reduce((a,b)=>a+b,0), sD=rD.reduce((a,b)=>a+b,0);
-      anim={aRID,dRID,frames:ANIM_FRAMES,A,D,rA,rD,sA,sD,done:false};
+      const A = regionDice[aRID], D = regionDice[dRID]||1;
+      const rA = Array.from({length:A},()=>Math.floor(Math.random()*6)+1),
+            rD = Array.from({length:D},()=>Math.floor(Math.random()*6)+1);
+      const sA = rA.reduce((a,b)=>a+b,0), sD = rD.reduce((a,b)=>a+b,0);
+      anim = { aRID, dRID, frames:ANIM_FRAMES, sA, sD, done:false };
       updateStatus();
     }
     function drawDiceAnim(){
@@ -424,95 +451,110 @@
       }
     }
     function resolveAtk(){
-      const {aRID,dRID,sA,sD,A,D}=anim;
-      const oldA=regionDice[aRID], oldD=regionDice[dRID]||1;
-      const win=sA> sD;
+      const { aRID, dRID, sA, sD } = anim;
+      const oldA = regionDice[aRID], oldD = regionDice[dRID]||1;
+      const attackerWon = sA > sD;
       let msg;
-      if(win){
-        const mv=Math.max(1,oldA-1);
-        regionOwner[dRID]=regionOwner[aRID];
-        regionDice[dRID]=mv;
-        regionDice[aRID]=1;
+      if(attackerWon){
+        // moved dice = oldA-1, cap MAX_DICE
+        let mv = Math.max(1, oldA-1);
+        mv = Math.min(mv, MAX_DICE);
+        regionOwner[dRID] = regionOwner[aRID];
+        regionDice[dRID] = mv;
+        regionDice[aRID] = 1;
         msg = (currentPlayer===0?'You':'AI '+currentPlayer)
-          +` win (${sA} vs ${sD})`;
-        logMove(`[Move] ${msg}`);
+            + ` win (${sA} vs ${sD})`;
       } else {
-        regionDice[aRID]=1;
+        regionDice[aRID] = 1;
         msg = (currentPlayer===0?'You':'AI '+currentPlayer)
-          +` lose (${sA} vs ${sD})`;
-        logMove(`[Move] ${msg}`);
+            + ` lose (${sA} vs ${sD})`;
       }
+      // ensure cap
+      regionDice[aRID] = Math.min(regionDice[aRID], MAX_DICE);
+      regionDice[dRID] = Math.min(regionDice[dRID], MAX_DICE);
       showDiceResult(msg);
+      logMove(`[Move] ${msg}`);
+      // update territories
       territories.forEach(t=>{
         if(t.region>=0){
-          t.owner=regionOwner[t.region];
-          t.dice=regionDice[t.region];
+          t.owner = regionOwner[t.region];
+          t.dice  = regionDice[t.region];
         }
       });
-      anim=null; draw(); updateStatus();
+      anim = null;
+      draw();
+      updateStatus();
     }
 
+    // AI TURN
     function aiTurn(pn){
-      for(let r=0;r<regionCount;r++){
-        if(regionOwner[r]===pn && regionDice[r]>1){
-          for(const n of getNeighborRegions(r)){
-            if(regionOwner[n]>=0 && regionOwner[n]!==pn
-               && regionDice[r]>regionDice[n]+1){
-              startAtk(r,n); return;
+      for(let rid=0; rid<regionCount; rid++){
+        if(regionOwner[rid]===pn && regionDice[rid]>1){
+          for(const nr of getNeighborRegions(rid)){
+            if(regionOwner[nr]>=0 && regionOwner[nr]!==pn
+               && regionDice[rid] > regionDice[nr]+1){
+              startAtk(rid,nr); return;
             }
           }
         }
       }
-      reinforce(pn); advancePlayer();
-    }
-    function reinforce(p){
-      for(let r=0;r<regionCount;r++) if(regionOwner[r]===p) regionDice[r]++;
-      territories.forEach(t=>{ if(t.region>=0) t.dice=regionDice[t.region]; });
+      reinforce(pn);
+      advancePlayer();
     }
 
-    // -- Input Events --
+    // INPUT HANDLERS
     canvas.addEventListener('click',e=>{
-      if(currentPlayer!==0 || anim) return;
+      if(currentPlayer!==0||anim) return;
       const rect=canvas.getBoundingClientRect();
       const mx=e.clientX-rect.left, my=e.clientY-rect.top;
       const cell=pxToHex(mx,my);
       if(!cell) return;
-      const i=cell.r*COLS+cell.c, rr=territories[i].region;
-      if(rr<0) return;
-      if(regionOwner[rr]===0 && regionDice[rr]>1){
-        selectedRegion = (selectedRegion===rr? null: rr);
+      const idx=cell.r*COLS+cell.c, rid=territories[idx].region;
+      if(rid<0) return;
+      if(regionOwner[rid]===0 && regionDice[rid]>1){
+        selectedRegion = (selectedRegion===rid? null: rid);
         draw(); return;
       }
-      if(selectedRegion!==null && getNeighborRegions(selectedRegion).includes(rr)){
-        startAtk(selectedRegion,rr);
+      if(selectedRegion!==null && getNeighborRegions(selectedRegion).includes(rid)){
+        startAtk(selectedRegion, rid);
       }
     });
     endTurnBtn.addEventListener('click',()=>{
-      if(currentPlayer===0 && !anim){ reinforce(0); advancePlayer(); }
+      if(currentPlayer===0 && !anim){
+        reinforce(0);
+        advancePlayer();
+      }
     });
     newMapBtn.addEventListener('click',()=>{
       NUM_PLAYERS = 1 + parseInt(aiCountSelect.value);
       initGame();
     });
 
-    function renderLog(){ moveLogDiv.innerHTML=''; moveLog.forEach(t=>{ const d=document.createElement('div'); d.textContent=t; moveLogDiv.appendChild(d); }); }
     toggleLog.addEventListener('click',()=>{
-      const sh=moveLogDiv.style.display==='none';
-      moveLogDiv.style.display = sh?'block':'none';
-      toggleLog.textContent = sh?'Hide Move Log':'Show Move Log';
+      const show = moveLogDiv.style.display==='none';
+      moveLogDiv.style.display=show?'block':'none';
+      toggleLog.textContent=show?'Hide Move Log':'Show Move Log';
     });
+    function renderLog(){
+      moveLogDiv.innerHTML='';
+      moveLog.forEach(t=>{
+        const d=document.createElement('div');
+        d.textContent=t;
+        moveLogDiv.appendChild(d);
+      });
+    }
 
     function pxToHex(mx,my){
       const py=my-yOff; if(py<0) return null;
-      const r=~~(py/VSP); if(r<0||r>=ROWS) return null;
+      const r=Math.floor(py/VSP); if(r<0||r>=ROWS) return null;
       const px=mx-xOff, off=(r%2?HEX_W/2:0);
-      const c=~~((px-off)/HEX_W); if(c<0||c>=COLS) return null;
+      const c=Math.floor((px-off)/HEX_W); if(c<0||c>=COLS) return null;
       return {r,c};
     }
 
-    // -- Start --
+    // START
     initGame();
-    setInterval(draw,1000/FPS);
+    setInterval(draw, 1000/FPS);
 
   })();
   </script>
