@@ -2,68 +2,151 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Hex Dice Wars — Summary & Replay</title>
+  <title>Hex Dice Wars</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
   <style>
-    html, body { margin:0; padding:0; background:#eeeeee; font-family:sans-serif; overflow:hidden; }
-    #controls { position:absolute; top:10px; left:10px; z-index:10; }
-    #controls select, #controls button { margin-right:8px; }
-    #gameContainer { position:absolute; top:0; left:0; }
-    canvas { display:block; background:#fff; border:2px solid #ccc; }
-    #uiBar { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); }
-    #statusText { margin-left:12px; }
-
-    /* Dice result popup */
+    :root {
+      --bg-gradient-start: #e0f7fa;
+      --bg-gradient-end:   #80deea;
+      --water-start:       #b3e5fc;
+      --water-end:         #81d4fa;
+      --human-color:       #3B83BD;
+      --ai1-color:         #BD3B3B;
+      --ai2-color:         #3BBD3B;
+      --ai3-color:         #BDBD3B;
+      --ai4-color:         #8A2BE2;
+      --ai5-color:         #FFA500;
+      --tooltip-bg:        rgba(33,33,33,0.9);
+      --overlay-bg:        rgba(0,0,0,0.7);
+    }
+    html, body {
+      margin:0; padding:0;
+      height:100%; width:100%;
+      background: linear-gradient(135deg,
+                  var(--bg-gradient-start),
+                  var(--bg-gradient-end));
+      font-family: 'Roboto', sans-serif;
+      overflow:hidden;
+    }
+    #controls {
+      position:absolute; top:12px; left:12px; z-index:10;
+      background:rgba(255,255,255,0.85); padding:8px 12px;
+      border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,0.2);
+    }
+    #controls select, #controls button {
+      font-family:inherit; font-size:14px;
+      margin-right:6px; padding:4px 8px;
+      border:1px solid #999; border-radius:4px;
+      background:#fff; cursor:pointer;
+      transition:background 0.2s;
+    }
+    #controls button:hover, #controls select:hover {
+      background:#f0f0f0;
+    }
+    #gameContainer {
+      position:absolute; top:0; left:0; right:0; bottom:0;
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+    }
+    canvas {
+      background:#fafafa;
+      border:2px solid #ccc;
+      box-shadow:0 4px 12px rgba(0,0,0,0.15);
+    }
+    #uiBar {
+      margin-top:8px; display:flex;
+      align-items:center; gap:12px;
+    }
+    #uiBar button {
+      font-family:inherit; font-size:14px;
+      padding:6px 12px; border:1px solid #999;
+      border-radius:4px; background:#fff;
+      cursor:pointer; transition:background 0.2s;
+    }
+    #uiBar button:hover { background:#f0f0f0; }
+    #uiBar button:disabled { opacity:0.5; cursor:default; }
+    #statusText { font-size:14px; color:#333; }
     #diceResult {
-      position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
-      background:rgba(0,0,0,0.7); color:#fff;
-      padding:12px 24px; border-radius:8px; font-size:18px;
-      opacity:0; pointer-events:none; transition:opacity .5s; z-index:100;
+      position:fixed; bottom:20px; left:50%;
+      transform:translateX(-50%);
+      background:var(--overlay-bg); color:#fff;
+      padding:12px 24px; border-radius:8px;
+      font-size:16px; opacity:0;
+      transition:opacity 0.5s; pointer-events:none;
+      box-shadow:0 4px 12px rgba(0,0,0,0.3);
+      z-index:50;
     }
     #diceResult.show { opacity:1; }
-
-    /* Tooltip */
     #tooltip {
       position:absolute; pointer-events:none;
-      background:rgba(0,0,0,0.75); color:#fff;
-      padding:6px 8px; border-radius:4px;
-      font-size:14px; line-height:1.4;
-      display:none; max-width:200px; z-index:20;
+      background:var(--tooltip-bg); color:#fff;
+      padding:8px 10px; border-radius:6px;
+      font-size:13px; line-height:1.4;
+      display:none; max-width:220px;
+      box-shadow:0 2px 8px rgba(0,0,0,0.4);
+      z-index:60;
     }
-    #tooltip .probBar { width:100%; height:8px; background:#444; border-radius:4px; margin:4px 0; }
-    #tooltip .probBar > div { height:100%; background:#4caf50; border-radius:4px; }
-
-    /* Sidebar */
+    #tooltip .probBar {
+      width:100%; height:6px; background:#555;
+      border-radius:3px; margin-top:4px; overflow:hidden;
+    }
+    #tooltip .probBar>div { height:100%; background:#4caf50; }
     #sidebar {
-      position:absolute; top:10px; right:10px;
-      width:200px; background:rgba(255,255,255,0.9);
-      border:1px solid #aaa; border-radius:4px;
-      padding:8px; font-size:14px; z-index:10;
+      position:absolute; top:12px; right:12px;
+      width:210px; background:rgba(255,255,255,0.9);
+      border-radius:6px; padding:10px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.2);
+      font-size:13px; color:#333; z-index:10;
     }
-    #scoreboard { margin-bottom:12px; }
-    .playerLine { display:flex; align-items:center; margin-bottom:4px; }
-    .playerColor { width:12px; height:12px; margin-right:6px; }
-    #toggleLog { width:100%; margin-bottom:4px; }
-    #moveLog { max-height:150px; overflow-y:auto; display:none; border-top:1px solid #ccc; padding-top:4px;}
-    #moveLog div { margin-bottom:2px; }
-
-    /* Endgame overlay */
+    #scoreboard { margin-bottom:10px; }
+    .playerLine { display:flex; align-items:center; margin-bottom:6px; }
+    .playerColor {
+      width:14px; height:14px; border-radius:50%;
+      margin-right:8px; flex-shrink:0;
+      box-shadow:0 1px 3px rgba(0,0,0,0.3);
+    }
+    #toggleLog {
+      width:100%; padding:6px; font-size:13px;
+      border:1px solid #999; border-radius:4px;
+      background:#fff; cursor:pointer;
+      transition:background 0.2s;
+    }
+    #toggleLog:hover { background:#f0f0f0; }
+    #moveLog {
+      max-height:140px; overflow-y:auto; display:none;
+      margin-top:8px; border-top:1px solid #ccc;
+      padding-top:6px;
+    }
+    #moveLog div { margin-bottom:4px; }
     #endOverlay {
       position:fixed; top:0; left:0; width:100%; height:100%;
       background:rgba(0,0,0,0.8); display:none;
-      justify-content:center; align-items:center; z-index:200;
+      align-items:center; justify-content:center; z-index:100;
     }
     #endOverlay .content {
       background:#fff; padding:20px; border-radius:8px;
-      text-align:center; width:300px;
+      width:320px; text-align:center;
+      box-shadow:0 4px 16px rgba(0,0,0,0.3);
     }
-    #endOverlay h2 { margin-top:0; }
-    #endOverlay button { margin-top:12px; padding:8px 16px; }
+    #endOverlay h2 {
+      margin-top:0; font-size:22px; color:#333;
+    }
+    #endOverlay p { margin:8px 0; color:#555; font-size:14px; }
+    #endOverlay button {
+      margin-top:12px; padding:8px 20px;
+      font-size:14px; border:none; border-radius:4px;
+      background:var(--human-color); color:#fff;
+      cursor:pointer; transition:background 0.2s;
+    }
+    #endOverlay button:hover { background:#2e6ea8; }
   </style>
 </head>
 <body>
   <div id="controls">
     <label>AI Players:
-      <select id="aiCountSelect"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+      <select id="aiCountSelect"><option>1</option><option>2</option>
+        <option>3</option><option>4</option><option>5</option>
+      </select>
     </label>
     <button id="newMapBtn">Generate New Map</button>
   </div>
@@ -92,23 +175,31 @@
   <script>
   (function(){
     // CONFIG & STATE
-    const ROWS=20, COLS=30, FPS=30, ANIM_FRAMES=15;
-    const FULL_COLORS=['#3B83BD','#BD3B3B','#3BBD3B','#BDBD3B','#8A2BE2','#FFA500'];
-    const WATER='#D0EFFF', DIRS4=[[-1,0],[1,0],[0,-1],[0,1]];
+    const ROWS=20, COLS=30, FPS=30, ANIM_FRAMES=15, MAX_DICE=12;
+    const COLORS = [
+      getComputedStyle(document.documentElement).getPropertyValue('--human-color').trim(),
+      getComputedStyle(document.documentElement).getPropertyValue('--ai1-color').trim(),
+      getComputedStyle(document.documentElement).getPropertyValue('--ai2-color').trim(),
+      getComputedStyle(document.documentElement).getPropertyValue('--ai3-color').trim(),
+      getComputedStyle(document.documentElement).getPropertyValue('--ai4-color').trim(),
+      getComputedStyle(document.documentElement).getPropertyValue('--ai5-color').trim()
+    ];
+    const WATER_START = getComputedStyle(document.documentElement).getPropertyValue('--water-start').trim();
+    const WATER_END   = getComputedStyle(document.documentElement).getPropertyValue('--water-end').trim();
     const PERSONALITIES=['Aggressor','Turtle','Opportunist','Scavenger'];
-    const MAX_DICE=12;
-
-    let NUM_PLAYERS=2, PLAYER_COLORS=FULL_COLORS.slice(0,2);
-    let landGrid, territories, regionCount, regionOwner, regionDice;
-    let currentPlayer=0, selectedRegion=null, gameOver=false, winner=null;
-    let anim=null, moveLog=[], lastStats=null, turnCount=0;
+    let NUM_PLAYERS=2, landGrid, territories, regionCount,
+        regionOwner, regionDice,
+        currentPlayer=0, selectedRegion=null,
+        gameOver=false, winner=null,
+        anim=null, moveLog=[], lastStats=null, turnCount=0;
 
     // CANVAS SETUP
     const canvas=document.getElementById('gameCanvas'), ctx=canvas.getContext('2d');
     const cw=canvas.width, ch=canvas.height;
     const HEX_R=Math.floor((cw/(COLS+0.5))/Math.sqrt(3));
     const HEX_W=Math.sqrt(3)*HEX_R, HEX_H=2*HEX_R, VSP=HEX_H*0.75;
-    const xOff=(cw-((COLS*HEX_W)+(HEX_W/2)))/2, yOff=(ch-(((ROWS-1)*VSP)+HEX_H))/2;
+    const xOff=(cw-((COLS*HEX_W)+(HEX_W/2)))/2,
+          yOff=(ch-(((ROWS-1)*VSP)+HEX_H))/2;
 
     // UI ELEMENTS
     const aiCountSelect=document.getElementById('aiCountSelect'),
@@ -119,65 +210,101 @@
           scoreboard=document.getElementById('scoreboard'),
           toggleLog=document.getElementById('toggleLog'),
           moveLogDiv=document.getElementById('moveLog'),
-          diceResultDiv=document.getElementById('diceResult'),
+          diceResult=document.getElementById('diceResult'),
           endOverlay=document.getElementById('endOverlay'),
           endTitle=document.getElementById('endTitle'),
           summaryStats=document.getElementById('summaryStats'),
           replayBtn=document.getElementById('replayBtn');
 
     // HELPERS
-    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
-    function createGrid(r,c){ const g=[]; for(let i=0;i<r;i++) g.push(Array(c).fill(false)); return g; }
+    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} }
+    function createGrid(r,c){ return Array.from({length:r},()=>Array(c).fill(false)); }
     function removeIsolated(g){
       const toRem=[];
       for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
         if(!g[r][c]) continue;
-        let count=0;
-        DIRS4.forEach(([dr,dc])=>{ const nr=r+dr,nc=c+dc; if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) count++; });
-        if(count===0) toRem.push([r,c]);
+        let adj=0;
+        [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc])=>{
+          const nr=r+dr,nc=c+dc;
+          if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) adj++;
+        });
+        if(adj===0) toRem.push([r,c]);
       }
       toRem.forEach(([r,c])=>g[r][c]=false);
+    }
+    function enforceContiguous(g){
+      const visited=createGrid(ROWS,COLS), comps=[];
+      for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+        if(g[r][c]&&!visited[r][c]){
+          const q=[[r,c]], comp=[];
+          visited[r][c]=true;
+          while(q.length){
+            const [rr,cc]=q.shift();
+            comp.push([rr,cc]);
+            [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc])=>{
+              const nr=rr+dr,nc=cc+dc;
+              if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]&&!visited[nr][nc]){
+                visited[nr][nc]=true; q.push([nr,nc]);
+              }
+            });
+          }
+          comps.push(comp);
+        }
+      }
+      if(comps.length<=1) return g;
+      let largest=comps[0];
+      comps.forEach(cmp=>{ if(cmp.length>largest.length) largest=cmp; });
+      const ng=createGrid(ROWS,COLS);
+      largest.forEach(([r,c])=>ng[r][c]=true);
+      return ng;
     }
     function genLand(){
       let g=createGrid(ROWS,COLS);
       const seeds=Math.max(1,Math.floor(ROWS*COLS*0.04));
-      for(let i=0;i<seeds;i++) g[Math.floor(Math.random()*ROWS)][Math.floor(Math.random()*COLS)]=true;
+      for(let i=0;i<seeds;i++){
+        g[Math.floor(Math.random()*ROWS)][Math.floor(Math.random()*COLS)] = true;
+      }
       for(let pass=0;pass<6;pass++){
         const ng=g.map(r=>r.slice());
         for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
           if(g[r][c]) continue;
-          let n=0;
-          for(const [dr,dc] of DIRS4){
+          let adj=0;
+          [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc])=>{
             const nr=r+dr,nc=c+dc;
-            if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) n++;
-          }
-          if(n>0 && Math.random()<1-Math.pow(0.6,n)) ng[r][c]=true;
+            if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&g[nr][nc]) adj++;
+          });
+          if(adj>0&&Math.random()<1-Math.pow(0.6,adj)) ng[r][c]=true;
         }
         g=ng; removeIsolated(g);
       }
       removeIsolated(g);
+      g=enforceContiguous(g);
+      removeIsolated(g);
       return g;
     }
     function partitionRegions(){
-      const total=ROWS*COLS, map=Array(total).fill(-1), landIdx=[];
-      for(let i=0;i<total;i++){ const r=Math.floor(i/COLS),c=i%COLS; if(landGrid[r][c]) landIdx.push(i); }
-      regionCount=Math.max(1,Math.floor(landIdx.length/5));
-      shuffle(landIdx);
-      const seeds=landIdx.slice(0,regionCount), queue=seeds.slice();
+      const total=ROWS*COLS, map=Array(total).fill(-1), idxs=[];
+      for(let i=0;i<total;i++){
+        const r=Math.floor(i/COLS), c=i%COLS;
+        if(landGrid[r][c]) idxs.push(i);
+      }
+      regionCount=Math.max(1,Math.floor(idxs.length/5));
+      shuffle(idxs);
+      const seeds=idxs.slice(0,regionCount), queue=seeds.slice();
       seeds.forEach((i,r)=>map[i]=r);
       while(queue.length){
         const i=queue.shift(), r0=Math.floor(i/COLS), c0=i%COLS;
-        for(const [dr,dc] of DIRS4){
+        [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc])=>{
           const nr=r0+dr,nc=c0+dc, ni=nr*COLS+nc;
           if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&map[ni]===-1&&landGrid[nr][nc]){
             map[ni]=map[i]; queue.push(ni);
           }
-        }
+        });
       }
-      landIdx.forEach(i=>{
+      idxs.forEach(i=>{
         if(map[i]===-1){
           const r0=Math.floor(i/COLS), c0=i%COLS;
-          for(const [dr,dc] of DIRS4){
+          for(const [dr,dc] of [[-1,0],[1,0],[0,-1],[0,1]]){
             const nr=r0+dr,nc=c0+dc, ni=nr*COLS+nc;
             if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&map[ni]>=0){
               map[i]=map[ni]; break;
@@ -189,10 +316,10 @@
     }
     function getNeighborsHex(i){
       const r=Math.floor(i/COLS), c=i%COLS, out=[];
-      for(const [dr,dc] of DIRS4){
+      [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc])=>{
         const nr=r+dr,nc=c+dc;
         if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS) out.push(nr*COLS+nc);
-      }
+      });
       return out;
     }
     function getNeighborRegions(rid){
@@ -201,7 +328,7 @@
         if(t.region!==rid) return;
         getNeighborsHex(i).forEach(n=>{
           const nr=territories[n].region;
-          if(nr!==rid && nr!==-1) s.add(nr);
+          if(nr!==rid&&nr!==-1) s.add(nr);
         });
       });
       return [...s];
@@ -232,172 +359,190 @@
           t.region=rid; t.owner=regionOwner[rid]; t.dice=regionDice[rid];
         }
       });
+      // neutral ruins
       const uniq=[...new Set(rmap.filter(r=>r>=0))];
       shuffle(uniq);
       const ruinCount=Math.max(1,Math.floor(uniq.length*0.02));
-      uniq.slice(0,ruinCount).forEach(r=>regionOwner[r]=-2);
+      uniq.slice(0,ruinCount).forEach(rid=>regionOwner[rid]=-2);
       territories.forEach(t=>{
-        if(t.region>=0 && regionOwner[t.region]===-2){
+        if(t.region>=0&&regionOwner[t.region]===-2){
           t.owner=-2; t.dice=0;
         }
       });
 
-      currentPlayer=0; selectedRegion=null; gameOver=false; anim=null;
-      turnCount=0;
-      PLAYER_COLORS=FULL_COLORS.slice(0,NUM_PLAYERS);
+      currentPlayer=0; selectedRegion=null;
+      gameOver=false; winner=null;
+      anim=null; turnCount=0;
       lastStats=computeStats(); moveLog=[];
-      renderLog(); updateScoreboard(); updateStatus(); draw();
       endOverlay.style.display='none';
+      updateScoreboard(); updateStatus(); draw();
     }
 
-    // DRAW
+    // DRAWING
     function draw(){
       ctx.clearRect(0,0,cw,ch);
       for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
-        const idx=r*COLS+c, t=territories[idx], {cx,cy}=hexCenter(r,c);
-        if(t.owner===-1){
-          drawHex(cx,cy,HEX_R,WATER);
-        } else if(t.owner===-2){
-          drawHex(cx,cy,HEX_R,'#aaa');
-          ctx.fillStyle='#000'; ctx.font=`${HEX_R}px sans-serif`;
+        const idx=r*COLS+c, cell=territories[idx],
+              {cx,cy}=hexCenter(r,c);
+        if(cell.owner===-1){
+          drawHex(cx,cy,HEX_R, WATER_START, WATER_END);
+        } else if(cell.owner===-2){
+          drawHex(cx,cy,HEX_R, '#bbbbbb', '#888888');
+          ctx.fillStyle='#333';
+          ctx.font=`${HEX_R}px Roboto`;
           ctx.textAlign='center'; ctx.textBaseline='middle';
           ctx.fillText('★',cx,cy);
         } else {
-          drawHex(cx,cy,HEX_R,PLAYER_COLORS[t.owner]);
-          if(t.region===selectedRegion && currentPlayer===0 && !anim && !gameOver){
-            drawHexOutline(cx,cy,HEX_R,'#fff',3);
+          drawHex(cx,cy,HEX_R, COLORS[cell.owner], null);
+          if(cell.region===selectedRegion && currentPlayer===0 && !anim && !gameOver){
+            drawHexOutline(cx,cy,HEX_R, '#fff', 3);
           }
-          ctx.fillStyle='#000'; ctx.font=`${HEX_R*0.9}px sans-serif`;
+          ctx.fillStyle='#000';
+          ctx.font=`${HEX_R*0.9}px Roboto`;
           ctx.textAlign='center'; ctx.textBaseline='middle';
-          ctx.fillText(t.dice,cx,cy);
+          ctx.fillText(cell.dice, cx, cy);
         }
       }
       if(anim) drawDiceAnim();
     }
-    function drawHex(x,y,r,col){
-      ctx.beginPath();
+    function drawHex(x,y,r,c1,c2){
+      const path=new Path2D();
       for(let i=0;i<6;i++){
-        const ang=-Math.PI/2+i*(Math.PI/3);
-        const px=x+r*Math.cos(ang), py=y+r*Math.sin(ang);
-        i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+        const ang=-Math.PI/2+i*(Math.PI/3),
+              px=x+r*Math.cos(ang), py=y+r*Math.sin(ang);
+        i===0?path.moveTo(px,py):path.lineTo(px,py);
       }
-      ctx.closePath(); ctx.fillStyle=col; ctx.fill();
-      ctx.strokeStyle='#555'; ctx.lineWidth=1; ctx.stroke();
+      path.closePath();
+      // gradient
+      if(c2){
+        const grad=ctx.createRadialGradient(x,y,r*0.2,x,y,r);
+        grad.addColorStop(0,c2); grad.addColorStop(1,c1);
+        ctx.fillStyle=grad;
+      } else {
+        const grad=ctx.createRadialGradient(x,y,r*0.2,x,y,r);
+        grad.addColorStop(0,'rgba(255,255,255,0.5)');
+        grad.addColorStop(1,c1);
+        ctx.fillStyle=grad;
+      }
+      ctx.shadowColor='rgba(0,0,0,0.2)'; ctx.shadowBlur=4;
+      ctx.fill(path); ctx.shadowBlur=0;
+      ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=1;
+      ctx.stroke(path);
     }
     function drawHexOutline(x,y,r,col,th){
       ctx.beginPath();
       for(let i=0;i<6;i++){
-        const ang=-Math.PI/2+i*(Math.PI/3);
-        const px=x+r*Math.cos(ang), py=y+r*Math.sin(ang);
+        const ang=-Math.PI/2+i*(Math.PI/3),
+              px=x+r*Math.cos(ang), py=y+r*Math.sin(ang);
         i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
       }
-      ctx.closePath(); ctx.strokeStyle=col; ctx.lineWidth=th; ctx.stroke();
+      ctx.closePath();
+      ctx.strokeStyle=col; ctx.lineWidth=th; ctx.stroke();
     }
     function hexCenter(r,c){
-      const cx=xOff+HEX_W*(c+0.5+0.5*(r%2)),
-            cy=yOff+HEX_R+r*VSP;
-      return {cx,cy};
+      return {
+        cx: xOff+HEX_W*(c+0.5+0.5*(r%2)),
+        cy: yOff+HEX_R+r*VSP
+      };
     }
 
     // TOOLTIP
     canvas.addEventListener('mousemove',e=>{
-      const rect=canvas.getBoundingClientRect();
-      const mx=e.clientX-rect.left, my=e.clientY-rect.top;
-      const cell=pxToHex(mx,my);
+      const rect=canvas.getBoundingClientRect(),
+            mx=e.clientX-rect.left, my=e.clientY-rect.top,
+            cell=pixelToHex(mx,my);
       if(!cell){ tooltip.style.display='none'; return; }
-      const idx=cell.r*COLS+cell.c, rr=territories[idx].region;
-      if(rr<0){ tooltip.style.display='none'; return; }
-      showTip(e.pageX,e.pageY,rr);
+      const idx=cell.r*COLS+cell.c, rid=territories[idx].region;
+      if(rid<0){ tooltip.style.display='none'; return; }
+      showTooltip(e.pageX,e.pageY,rid);
     });
-    function showTip(px,py,rr){
-      const o=regionOwner[rr], d=regionDice[rr];
-      const name=o>=0?(o===0?'You':`AI ${o} (${PERSONALITIES[(o-1)%4]})`):
-                 o===-2?'Neutral Ruin':'—';
-      const reinf=o>=0?'+1':'0';
-      const nbrs=getNeighborRegions(rr);
+    function showTooltip(px,py,rid){
+      const o=regionOwner[rid], d=regionDice[rid],
+            name=o>=0?(o===0?'You':`AI ${o}`):'Neutral',
+            reinf=o>=0?'+1':'0',
+            nbrs=getNeighborRegions(rid);
       let cR=0,cO=0;
       nbrs.forEach(n=>{
         const oo=regionOwner[n];
-        if(oo===-2) cR++;
-        else if(oo>=0&&oo!==o) cO++;
+        if(oo===-2)cR++; else if(oo>=0&&oo!==o)cO++;
       });
       let html=`<strong>Owner:</strong> ${name}<br>
                 <strong>Dice:</strong> ${d}<br>
                 <strong>Reinf:</strong> ${reinf}<br>
                 <strong>Neighbors:</strong> ${nbrs.length}
-                (<span style="color:#ffa500;">★${cR}</span>,
-                 <span style="color:#f44;">${cO}</span>)`;
-      if(selectedRegion!==null && nbrs.includes(rr)){
-        const aD=regionDice[selectedRegion], prob=aD/(aD+(d||1));
-        html+=`<br><strong>Win %:</strong> ${Math.round(prob*100)}%`;
-        html+=`<div class="probBar"><div style="width:${prob*100}%"></div></div>`;
+                (<span style="color:#ffa500">★${cR}</span>,
+                 <span style="color:#f44">${cO}</span>)`;
+      if(selectedRegion!==null&&nbrs.includes(rid)){
+        const aD=regionDice[selectedRegion],
+              prob=Math.round(100*aD/(aD+(d||1)));
+        html+=`<br><strong>Win %:</strong> ${prob}%`+
+              `<div class="probBar"><div style="width:${prob}%"></div></div>`;
       }
       tooltip.innerHTML=html;
-      tooltip.style.left=`${px+12}px`;
-      tooltip.style.top=`${py+12}px`;
+      tooltip.style.left=(px+12)+'px'; tooltip.style.top=(py+12)+'px';
       tooltip.style.display='block';
     }
-    function pxToHex(mx,my){
-      const py=my-yOff; if(py<0) return null;
-      const r=Math.floor(py/VSP); if(r<0||r>=ROWS) return null;
-      const px=mx-xOff, off=(r%2?HEX_W/2:0);
-      const c=Math.floor((px-off)/HEX_W); if(c<0||c>=COLS) return null;
+    function pixelToHex(mx,my){
+      const py=my-yOff; if(py<0)return null;
+      const r=Math.floor(py/VSP); if(r<0||r>=ROWS)return null;
+      const px=mx-xOff, off=(r%2?HEX_W/2:0),
+            c=Math.floor((px-off)/HEX_W);
+      if(c<0||c>=COLS)return null;
       return {r,c};
     }
 
     // SCOREBOARD & LOG
     function updateScoreboard(){
-      const st=computeStats();
+      const stats=computeStats();
       scoreboard.innerHTML='';
-      st.forEach((s,i)=>{
+      stats.forEach((s,i)=>{
         const prev=lastStats?lastStats[i].dice:0, dlt=s.dice-prev;
-        const div=document.createElement('div');
-        div.className='playerLine';
-        div.innerHTML=`
-          <span class="playerColor" style="background:${PLAYER_COLORS[i]}"></span>
+        const line=document.createElement('div');
+        line.className='playerLine';
+        line.innerHTML=`<div class="playerColor" style="background:${COLORS[i]}"></div>
           <strong>${i===0?'You':`AI ${i}`}</strong>
-          Dice:${s.dice} Reg:${s.regions}
+          &nbsp;Dice:${s.dice} Regions:${s.regions}
           <span style="margin-left:auto;color:${dlt>=0?'#4caf50':'#f44336'}">
             ${dlt>=0?'+':''}${dlt}
           </span>`;
-        scoreboard.appendChild(div);
+        scoreboard.appendChild(line);
       });
-      lastStats=st.map(s=>({dice:s.dice,regions:s.regions}));
+      lastStats=stats.map(s=>({dice:s.dice,regions:s.regions}));
     }
     toggleLog.addEventListener('click',()=>{
-      const sh=moveLogDiv.style.display==='none';
-      moveLogDiv.style.display=sh?'block':'none';
-      toggleLog.textContent=sh?'Hide Move Log':'Show Move Log';
+      const show=moveLogDiv.style.display==='none';
+      moveLogDiv.style.display=show?'block':'none';
+      toggleLog.textContent=show?'Hide Move Log':'Show Move Log';
     });
     function logMove(txt){
       moveLog.unshift(txt);
-      if(moveLog.length>100) moveLog.pop();
+      if(moveLog.length>100)moveLog.pop();
       renderLog();
     }
     function renderLog(){
       moveLogDiv.innerHTML='';
-      moveLog.forEach(t=>{
+      moveLog.forEach(txt=>{
         const d=document.createElement('div');
-        d.textContent=t;
+        d.textContent=txt;
         moveLogDiv.appendChild(d);
       });
     }
 
-    // DICE POPUP
+    // DICE RESULT
     function showDiceResult(msg){
-      diceResultDiv.textContent=msg;
-      diceResultDiv.classList.add('show');
-      setTimeout(()=>diceResultDiv.classList.remove('show'),2000);
+      diceResult.textContent=msg;
+      diceResult.classList.add('show');
+      setTimeout(()=>diceResult.classList.remove('show'),1800);
     }
 
-    // TURN & ATTACK
+    // TURNS & ATTACKS
     function updateStatus(){
       if(gameOver){
-        statusText.textContent=`Player ${winner+1} wins!`;
+        statusText.textContent = winner===0?'You Win!':`AI ${winner} Wins!`;
         endTurnBtn.disabled=true;
         showEndOverlay();
       } else if(currentPlayer===0){
-        statusText.textContent='Your turn. Select or End Turn.';
+        statusText.textContent='Your turn';
         endTurnBtn.disabled=false;
       } else {
         statusText.textContent=`AI ${currentPlayer} (${PERSONALITIES[(currentPlayer-1)%4]})…`;
@@ -412,39 +557,38 @@
         np=(np+1)%NUM_PLAYERS; tries++;
       }
       currentPlayer=np;
-      if(currentPlayer===0) turnCount++;
+      if(currentPlayer===0)turnCount++;
       checkGameOver();
       selectedRegion=null;
-      updateStatus();
-      draw();
+      updateStatus(); draw();
     }
     function checkGameOver(){
-      const os=new Set(regionOwner.filter(o=>o>=0));
-      if(os.size===1){ gameOver=true; winner=[...os][0]; }
+      const owners=new Set(regionOwner.filter(o=>o>=0));
+      if(owners.size===1){ gameOver=true; [winner]=owners; }
     }
 
-    // SMART REINFORCEMENTS
+    // REINFORCEMENTS
     function reinforce(player){
       const owned=regionOwner
         .map((o,i)=>o===player?i:-1)
         .filter(i=>i>=0);
       let reinf=Math.max(1,Math.floor(owned.length/2));
       const threats=owned.map(rid=>{
-        const ennemies=getNeighborRegions(rid)
+        const enemies=getNeighborRegions(rid)
           .filter(n=>regionOwner[n]>=0&&regionOwner[n]!==player).length;
-        return {rid,threat:ennemies};
+        return {rid,threat:enemies};
       });
       threats.sort((a,b)=>b.threat-a.threat);
       while(reinf>0){
         let gave=false;
         for(const t of threats){
-          if(reinf===0) break;
+          if(reinf===0)break;
           if(regionDice[t.rid]<MAX_DICE){
             regionDice[t.rid]=Math.min(regionDice[t.rid]+1,MAX_DICE);
             reinf--; gave=true;
           }
         }
-        if(!gave) break;
+        if(!gave)break;
       }
       territories.forEach(t=>{
         if(t.region>=0&&regionOwner[t.region]>=0){
@@ -454,23 +598,24 @@
     }
 
     // ATTACK ANIMATION & RESOLUTION
-    function startAtk(aRID,dRID){
+    function startAttack(aRID,dRID){
       const A=regionDice[aRID], D=regionDice[dRID]||1;
-      const rA=Array.from({length:A},()=>Math.floor(Math.random()*6)+1),
-            rD=Array.from({length:D},()=>Math.floor(Math.random()*6)+1);
-      const sA=rA.reduce((a,b)=>a+b,0), sD=rD.reduce((a,b)=>a+b,0);
-      anim={aRID,dRID,frames:ANIM_FRAMES,sA,sD,done:false};
+      const rollsA=Array.from({length:A},()=>Math.floor(Math.random()*6)+1),
+            rollsD=Array.from({length:D},()=>Math.floor(Math.random()*6)+1);
+      const sumA=rollsA.reduce((s,v)=>s+v,0),
+            sumD=rollsD.reduce((s,v)=>s+v,0);
+      anim={aRID,dRID,frames:ANIM_FRAMES,sumA,sumD,done:false};
       updateStatus();
     }
     function drawDiceAnim(){
       if(anim.frames>1){ anim.frames--; draw(); }
       else if(!anim.done){ anim.done=true; draw(); }
-      else { resolveAtk(); }
+      else { resolveAttack(); }
     }
-    function resolveAtk(){
-      const {aRID,dRID,sA,sD}=anim;
+    function resolveAttack(){
+      const {aRID,dRID,sumA,sumD}=anim;
       const oldA=regionDice[aRID], oldD=regionDice[dRID]||1;
-      const win=sA>sD;
+      const win=sumA>sumD;
       let msg;
       if(win){
         let mv=Math.max(1,oldA-1);
@@ -478,11 +623,13 @@
         regionOwner[dRID]=regionOwner[aRID];
         regionDice[dRID]=mv;
         regionDice[aRID]=1;
-        msg=(currentPlayer===0?'You':'AI '+currentPlayer)+` win (${sA} vs ${sD})`;
+        msg=(currentPlayer===0?'You':'AI '+currentPlayer)+` win (${sumA} vs ${sumD})`;
       } else {
         regionDice[aRID]=1;
-        msg=(currentPlayer===0?'You':'AI '+currentPlayer)+` lose (${sA} vs ${sD})`;
+        msg=(currentPlayer===0?'You':'AI '+currentPlayer)+` lose (${sumA} vs ${sumD})`;
       }
+      // Immediately check for endgame
+      checkGameOver();
       showDiceResult(msg); logMove(`[Move] ${msg}`);
       territories.forEach(t=>{
         if(t.region>=0){
@@ -493,39 +640,38 @@
       anim=null; draw(); updateStatus();
     }
 
-    // AI TURN (Aggressor + others)
+    // AI TURN
     function aiTurn(pn){
       if(PERSONALITIES[(pn-1)%4]==='Aggressor'){
         const ruinAttacks=[], expAttacks=[];
         for(let r=0;r<regionCount;r++){
-          if(regionOwner[r]!==pn||regionDice[r]<=1) continue;
+          if(regionOwner[r]!==pn||regionDice[r]<=1)continue;
           const myD=regionDice[r];
-          for(const nr of getNeighborRegions(r)){
+          getNeighborRegions(r).forEach(nr=>{
             const o=regionOwner[nr], eD=regionDice[nr]||1;
-            if(o===-2 && myD>1) ruinAttacks.push({a:r,d:nr});
+            if(o===-2&&myD>1)ruinAttacks.push({a:r,d:nr});
             else if(o>=0&&o!==pn){
-              if(myD>eD+1) expAttacks.push({a:r,d:nr,margin:myD-eD});
-              else if(myD===MAX_DICE&&eD===MAX_DICE) expAttacks.push({a:r,d:nr,margin:0});
+              if(myD>eD+1)expAttacks.push({a:r,d:nr,margin:myD-eD});
+              else if(myD===MAX_DICE&&eD===MAX_DICE)expAttacks.push({a:r,d:nr,margin:0});
             }
-          }
+          });
         }
         if(ruinAttacks.length){
           const c=ruinAttacks[Math.floor(Math.random()*ruinAttacks.length)];
-          startAtk(c.a,c.d); return;
+          startAttack(c.a,c.d); return;
         }
         if(expAttacks.length){
           expAttacks.sort((a,b)=>b.margin-a.margin);
-          const c=expAttacks[0];
-          startAtk(c.a,c.d); return;
+          startAttack(expAttacks[0].a,expAttacks[0].d); return;
         }
         reinforce(pn); advancePlayer(); return;
       }
-      // fallback: simple opportunist
       for(let r=0;r<regionCount;r++){
         if(regionOwner[r]===pn&&regionDice[r]>1){
           for(const nr of getNeighborRegions(r)){
-            if(regionOwner[nr]>=0&&regionOwner[nr]!==pn&&regionDice[r]>regionDice[nr]+1){
-              startAtk(r,nr); return;
+            if(regionOwner[nr]>=0&&regionOwner[nr]!==pn
+               &&regionDice[r]>regionDice[nr]+1){
+              startAttack(r,nr); return;
             }
           }
         }
@@ -535,19 +681,19 @@
 
     // INPUT HANDLERS
     canvas.addEventListener('click',e=>{
-      if(currentPlayer!==0||anim) return;
-      const rect=canvas.getBoundingClientRect();
-      const mx=e.clientX-rect.left, my=e.clientY-rect.top;
-      const cell=pxToHex(mx,my);
-      if(!cell) return;
-      const idx=cell.r*COLS+cell.c, rr=territories[idx].region;
-      if(rr<0) return;
-      if(regionOwner[rr]===0&&regionDice[rr]>1){
-        selectedRegion=(selectedRegion===rr?null:rr);
+      if(currentPlayer!==0||anim)return;
+      const rect=canvas.getBoundingClientRect(),
+            mx=e.clientX-rect.left, my=e.clientY-rect.top,
+            cell=pixelToHex(mx,my);
+      if(!cell)return;
+      const idx=cell.r*COLS+cell.c, rid=territories[idx].region;
+      if(rid<0)return;
+      if(regionOwner[rid]===0&&regionDice[rid]>1){
+        selectedRegion=(selectedRegion===rid?null:rid);
         draw(); return;
       }
-      if(selectedRegion!==null && getNeighborRegions(selectedRegion).includes(rr)){
-        startAtk(selectedRegion,rr);
+      if(selectedRegion!==null&&getNeighborRegions(selectedRegion).includes(rid)){
+        startAttack(selectedRegion,rid);
       }
     });
     endTurnBtn.addEventListener('click',()=>{
@@ -559,51 +705,49 @@
       NUM_PLAYERS=1+parseInt(aiCountSelect.value);
       initGame();
     });
-
     toggleLog.addEventListener('click',()=>{
-      const sh=moveLogDiv.style.display==='none';
-      moveLogDiv.style.display=sh?'block':'none';
-      toggleLog.textContent=sh?'Hide Move Log':'Show Move Log';
+      const show=moveLogDiv.style.display==='none';
+      moveLogDiv.style.display=show?'block':'none';
+      toggleLog.textContent=show?'Hide Move Log':'Show Move Log';
     });
+    replayBtn.addEventListener('click',()=>initGame());
+
     function renderLog(){
       moveLogDiv.innerHTML='';
-      moveLog.forEach(t=>{
-        const d=document.createElement('div'); d.textContent=t;
+      moveLog.forEach(txt=>{
+        const d=document.createElement('div');
+        d.textContent=txt;
         moveLogDiv.appendChild(d);
       });
     }
-
-    function pxToHex(mx,my){
-      const py=my-yOff; if(py<0) return null;
-      const r=Math.floor(py/VSP); if(r<0||r>=ROWS) return null;
-      const px=mx-xOff, off=(r%2?HEX_W/2:0);
-      const c=Math.floor((px-off)/HEX_W); if(c<0||c>=COLS) return null;
+    function pixelToHex(mx,my){
+      const py=my-yOff; if(py<0)return null;
+      const r=Math.floor(py/VSP); if(r<0||r>=ROWS)return null;
+      const px=mx-xOff, off=(r%2?HEX_W/2:0),
+            c=Math.floor((px-off)/HEX_W);
+      if(c<0||c>=COLS)return null;
       return {r,c};
     }
 
     // ENDGAME OVERLAY
     function showEndOverlay(){
       endOverlay.style.display='flex';
-      endTitle.textContent = (winner===0?'You Win!':'AI '+winner+' Wins!');
-      // build summary
+      endTitle.textContent= winner===0?'You Win!':`AI ${winner} Wins!`;
       const stats=computeStats();
-      const totalMoves = moveLog.length;
-      let html = `<p><strong>Turns Played:</strong> ${turnCount}</p>
-                  <p><strong>Total Attacks:</strong> ${totalMoves}</p>
-                  <h4>Final Stats</h4>`;
+      let html=`<p><strong>Turns:</strong> ${turnCount}</p>
+                <p><strong>Attacks:</strong> ${moveLog.length}</p>
+                <h4>Final Stats</h4>`;
       stats.forEach((s,i)=>{
-        html+=`<p style="color:${PLAYER_COLORS[i]};">
-                 ${i===0?'You':`AI ${i}`}: Dice ${s.dice}, Regions ${s.regions}
+        html+=`<p style="color:${COLORS[i]};margin:4px 0;">
+                 ${i===0?'You':`AI ${i}`}: ${s.dice} dice, ${s.regions} regions
                </p>`;
       });
-      summaryStats.innerHTML = html;
+      summaryStats.innerHTML=html;
     }
-    replayBtn.addEventListener('click',()=> initGame());
 
     // START
     initGame();
     setInterval(draw,1000/FPS);
-
   })();
   </script>
 </body>
